@@ -1,0 +1,10 @@
+{
+    "order_id": "uuid-v4",
+    "status": "ack|partial_fill|filled|rejected",
+    "acked_at_ns": "unix epoch",
+    "expected_fill_qty": "integer",
+    "actual_fill_qty": "integer",
+    "expected_fill_price": "float",
+    "actual_fill_price": "float",
+    "reject_reason": "null|insufficient_liquidity|invalid_price|invalid_order"
+}
