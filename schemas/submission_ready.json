@@ -3,7 +3,7 @@
     "contestant_id": "uuid-v4",
     "endpoint_url": "string",
     "port": "integer",
-    "langiage": "cpp | rust | go",
+    "language": "cpp | rust | go",
     "submitted_at": "iso-8601",
     "cpu_limit": "integer (2)",
     "memory_limit_mb": "integer (2)",
