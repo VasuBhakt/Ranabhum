@@ -20,7 +20,6 @@ type Submission struct {
 	StoragePath string    `json:"storage_path"`
 	Status      Status    `json:"status"`
 	SubmittedAt time.Time `json:"submitted_at"`
-
-	ContainerID string `json:"container_id,omitempty"`
-	EndpointURL string `json:"endpoint_url,omitempty"`
+	ContainerID string    `json:"container_id,omitempty"`
+	EndpointURL string    `json:"endpoint_url,omitempty"`
 }

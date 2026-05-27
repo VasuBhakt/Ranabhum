@@ -33,9 +33,7 @@ func IsValidArchive(filename string) bool {
 }
 
 func SaveSubmission(fileHeader *multipart.FileHeader, teamName, language string) (model.Submission, error) {
-
 	id := uuid.New().String()
-
 	safeFilename := fmt.Sprintf("%s_%s", id, filepath.Base(fileHeader.Filename))
 	destPath := filepath.Join(uploadsDir, safeFilename)
 
@@ -109,6 +107,20 @@ func UpdateStatus(id string, status model.Status) error {
 		return fmt.Errorf("submission %s not found", id)
 	}
 	s.Status = status
+	submissions[id] = s
+	return nil
+}
+
+func UpdateEndpoint(id, containerID, endpointURL string) error {
+	mu.Lock()
+	defer mu.Unlock()
+
+	s, found := submissions[id]
+	if !found {
+		return fmt.Errorf("submission %s not found", id)
+	}
+	s.ContainerID = containerID
+	s.EndpointURL = endpointURL
 	submissions[id] = s
 	return nil
 }

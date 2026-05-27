@@ -1,21 +1,29 @@
 package api
 
 import (
+	"log"
 	"net/http"
+	"sandbox-engine/docker"
 	"sandbox-engine/model"
 	"sandbox-engine/store"
 
 	"github.com/gin-gonic/gin"
 )
 
+var runner *docker.Runner
+
+func InitRunner(r *docker.Runner) {
+	runner = r
+}
+
 func RegisterRoutes(router *gin.Engine) {
 	router.POST("/submit", handleSubmit)
 	router.GET("/submissions", handleListSubmissions)
 	router.GET("/submissions/:id", handleGetSubmission)
+	router.DELETE("/submissions/:id", handleStopSubmission)
 }
 
 func handleSubmit(c *gin.Context) {
-
 	teamName := c.PostForm("team_name")
 	language := c.PostForm("language")
 
@@ -58,9 +66,30 @@ func handleSubmit(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{
-		"message":    "Submission received successfully",
+		"message":    "Submission received. Deploying in background...",
 		"submission": submission,
 	})
+
+	go func() {
+		log.Printf("[%s] Starting deployment for team: %s", submission.ID, submission.TeamName)
+		store.UpdateStatus(submission.ID, model.StatusCompiling)
+
+		info, err := runner.DeploySubmission(
+			submission.ID,
+			submission.StoragePath,
+			submission.Language,
+		)
+		if err != nil {
+			log.Printf("[%s] Deployment failed: %v", submission.ID, err)
+			store.UpdateStatus(submission.ID, model.StatusFailed)
+			store.UpdateEndpoint(submission.ID, "", "")
+			return
+		}
+
+		store.UpdateStatus(submission.ID, model.StatusRunning)
+		store.UpdateEndpoint(submission.ID, info.ContainerID, info.EndpointURL)
+		log.Printf("[%s] ✅ Live at %s", submission.ID, info.EndpointURL)
+	}()
 }
 
 func handleListSubmissions(c *gin.Context) {
@@ -75,12 +104,30 @@ func handleGetSubmission(c *gin.Context) {
 	id := c.Param("id")
 	submission, found := store.GetSubmission(id)
 	if !found {
-		c.JSON(http.StatusNotFound, gin.H{
-			"error": "Submission not found",
-		})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Submission not found"})
 		return
 	}
 	c.JSON(http.StatusOK, submission)
 }
 
-var _ = model.Submission{}
+func handleStopSubmission(c *gin.Context) {
+	id := c.Param("id")
+	submission, found := store.GetSubmission(id)
+	if !found {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Submission not found"})
+		return
+	}
+
+	if submission.ContainerID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No container running for this submission"})
+		return
+	}
+
+	if err := runner.StopContainer(submission.ContainerID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	store.UpdateStatus(id, model.StatusCompleted)
+	c.JSON(http.StatusOK, gin.H{"message": "Container stopped successfully"})
+}
