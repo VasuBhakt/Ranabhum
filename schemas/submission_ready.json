@@ -1,0 +1,12 @@
+{
+    "submission_id" : "uuid-v4",
+    "contestant_id": "uuid-v4",
+    "endpoint_url": "string",
+    "port": "integer",
+    "langiage": "cpp | rust | go",
+    "submitted_at": "iso-8601",
+    "cpu_limit": "integer (2)",
+    "memory_limit_mb": "integer (2)",
+    "status": "uploaded | building | running | stress_testing | scored | failed"
+}
+
