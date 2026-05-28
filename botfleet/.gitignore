@@ -1,0 +1,10 @@
+# binaries
+*.exe
+coordinator
+worker
+
+# env files (never commit secrets)
+.env
+
+# Go build cache
+/vendor/
