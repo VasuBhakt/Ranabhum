@@ -1,0 +1,19 @@
+FROM golang:1.22 AS builder
+
+WORKDIR /submission
+
+COPY . .
+
+RUN if [ ! -f go.mod ]; then go mod init submission; fi
+RUN go mod tidy
+RUN go build -o exchange .
+
+FROM debian:bookworm-slim
+
+WORKDIR /app
+
+COPY --from=builder /submission/exchange .
+
+EXPOSE 8080
+
+CMD ["./exchange"]
