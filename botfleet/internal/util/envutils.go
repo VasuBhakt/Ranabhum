@@ -1,13 +1,13 @@
-package envutils
+package util
 
 import (
+	"log"
 	"os"
 	"strconv"
-	"log"
 	"time"
 )
 
-func mustEnv(key string) string {
+func MustEnv(key string) string {
 	v := os.Getenv(key)
 	if v == "" {
 		log.Fatalf("required env var %s not set", key)
@@ -15,7 +15,7 @@ func mustEnv(key string) string {
 	return v
 }
 
-func intEnv(key string, def int) int {
+func IntEnv(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
@@ -24,7 +24,7 @@ func intEnv(key string, def int) int {
 	return def
 }
 
-func durationEnv(key string, def time.Duration) time.Duration {
+func DurationEnv(key string, def time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d

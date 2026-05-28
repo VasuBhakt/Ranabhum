@@ -28,7 +28,7 @@ type Config struct {
 // MetricsCallback is a function that receives the result of each order.
 // The coordinator passes in a function that publishes to Kafka —
 // this keeps the bot logic decoupled from Kafka entirely.
-type MetricsCallback func(m models.BotMetrics)
+type MetricsCallback func(m BotMetrics)
 
 // Run starts a single bot and blocks until ctx is cancelled or Duration expires.
 // It fires orders at RatePerSec orders/second by using a ticker.
@@ -104,7 +104,7 @@ func fireOrder(ctx context.Context, client *http.Client, cfg Config, onMetric Me
 
 	if err == nil {
 		defer resp.Body.Close()
-		var orderResp models.OrderResponse
+		var orderResp OrderResponse
 		if json.NewDecoder(resp.Body).Decode(&orderResp) == nil {
 			status = orderResp.Status
 			rejectReason = orderResp.RejectReason
@@ -121,7 +121,7 @@ func fireOrder(ctx context.Context, client *http.Client, cfg Config, onMetric Me
 
 	// report the full result back to the coordinator via the callback
 	// the coordinator will publish this to the bot.metrics Kafka topic
-	onMetric(models.BotMetrics{
+	onMetric(BotMetrics{
 		SubmissionID:      cfg.SubmissionID,
 		RunID:             cfg.RunID,
 		BotID:             cfg.BotID,
@@ -152,7 +152,7 @@ func fireOrder(ctx context.Context, client *http.Client, cfg Config, onMetric Me
 //
 // For cancel orders, side is set to "null" since it doesn't apply.
 // Price range is 100–150 to simulate a realistic instrument price.
-func randomOrder() models.OrderRequest {
+func randomOrder() OrderRequest {
 	r := rand.Float64()
 	var orderType string
 	var side string
@@ -180,12 +180,12 @@ func randomOrder() models.OrderRequest {
 		}
 	}
 
-	return models.OrderRequest{
+	return OrderRequest{
 		OrderID:       uuid.NewString(),
 		OrderType:     orderType,
 		Side:          side,
 		Price:         100.0 + rand.Float64()*50.0, // random price between 100 and 150
-		Quantity:      1 + rand.Intn(100),           // random quantity between 1 and 100
+		Quantity:      1 + rand.Intn(100),          // random quantity between 1 and 100
 		CancelOrderID: cancelOrderID,
 		TimestampNS:   time.Now().UnixNano(),
 	}

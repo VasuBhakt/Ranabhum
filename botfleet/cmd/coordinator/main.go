@@ -4,29 +4,27 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
 	"Ranabhum/bot-fleet/internal/bot"
-	botrunner "Ranabhum/bot-fleet/internal/bot"
 	"Ranabhum/bot-fleet/internal/consumer"
 	"Ranabhum/bot-fleet/internal/publisher"
 	"Ranabhum/bot-fleet/internal/state"
-	util "Ranabhum/bot-fleet/internal/envutils"
+	util "Ranabhum/bot-fleet/internal/util"
+
+	"github.com/google/uuid"
 )
 
 func main() {
-	brokers := strings.Split(mustEnv("KAFKA_BROKERS"), ",") // e.g. redpanda:9092
-	redisAddr := util.mutil.ustEnv("REDIS_ADDR")                       // e.g. redis:6379
-	botCount := util.intEnv("BOT_COUNT", 10)                      // bots per submission
-	ratePerBot := util.intEnv("RATE_PER_BOT", 50)                 // orders/sec per bot
-	runDuration := util.durationEnv("RUN_DURATION", 60*time.Second)
+	brokers := strings.Split(util.MustEnv("KAFKA_BROKERS"), ",") // e.g. redpanda:9092
+	redisAddr := util.MustEnv("REDIS_ADDR")                      // e.g. redis:6379
+	botCount := util.IntEnv("BOT_COUNT", 10)                     // bots per submission
+	ratePerBot := util.IntEnv("RATE_PER_BOT", 50)                // orders/sec per bot
+	runDuration := util.DurationEnv("RUN_DURATION", 60*time.Second)
 
 	store := state.New(redisAddr)
 	pub := publisher.New(brokers)
@@ -66,7 +64,7 @@ func main() {
 			wg.Add(1)
 			go func(botIdx int) {
 				defer wg.Done()
-				cfg := botrunner.Config{
+				cfg := bot.Config{
 					BotID:        fmt.Sprintf("%s-bot-%d", runID, botIdx),
 					RunID:        runID,
 					SubmissionID: event.SubmissionID,
@@ -74,7 +72,7 @@ func main() {
 					Duration:     runDuration,
 					RatePerSec:   ratePerBot,
 				}
-				err := botrunner.Run(ctx, cfg, func(m bot.BotMetrics) {
+				err := bot.Run(ctx, cfg, func(m bot.BotMetrics) {
 					pub.Publish(ctx, m) // fire-and-forget
 				})
 				if err != nil && ctx.Err() == nil {
@@ -103,4 +101,3 @@ func main() {
 		log.Printf("[coordinator] consumer exited: %v", err)
 	}
 }
-

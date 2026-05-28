@@ -3,28 +3,26 @@ package main
 import (
 	"context"
 	"log"
-	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
 	"Ranabhum/bot-fleet/internal/bot"
 	botrunner "Ranabhum/bot-fleet/internal/bot"
 	"Ranabhum/bot-fleet/internal/publisher"
-	util "Ranabhum/bot-fleet/internal/envutils"
+	util "Ranabhum/bot-fleet/internal/util"
 )
 
 // This binary is used when spawning bots as individual Kubernetes Jobs.
 // Env vars are injected by the coordinator or k8s manifest.
 func main() {
-	botID        := util.mustEnv("BOT_ID")
-	runID        := util.mustEnv("RUN_ID")
-	submissionID := util.mustEnv("SUBMISSION_ID")
-	targetURL    := util.mustEnv("TARGET_URL")
-	brokers      := util.mustEnv("KAFKA_BROKERS")
-	ratePerSec   := util.intEnv("RATE_PER_SEC", 50)
-	duration     := util.durationEnv("RUN_DURATION", 60*time.Second)
+	botID := util.MustEnv("BOT_ID")
+	runID := util.MustEnv("RUN_ID")
+	submissionID := util.MustEnv("SUBMISSION_ID")
+	targetURL := util.MustEnv("TARGET_URL")
+	brokers := util.MustEnv("KAFKA_BROKERS")
+	ratePerSec := util.IntEnv("RATE_PER_SEC", 50)
+	duration := util.DurationEnv("RUN_DURATION", 60*time.Second)
 
 	pub := publisher.New([]string{brokers})
 	defer pub.Close()
@@ -52,4 +50,3 @@ func main() {
 	}
 	log.Printf("[worker] bot_id=%s done", botID)
 }
-
