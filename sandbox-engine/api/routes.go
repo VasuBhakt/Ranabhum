@@ -1,11 +1,16 @@
 package api
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"os"
 	"sandbox-engine/docker"
 	"sandbox-engine/model"
+	"sandbox-engine/publisher"
 	"sandbox-engine/store"
+	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -89,6 +94,34 @@ func handleSubmit(c *gin.Context) {
 		store.UpdateStatus(submission.ID, model.StatusRunning)
 		store.UpdateEndpoint(submission.ID, info.ContainerID, info.EndpointURL)
 		log.Printf("[%s] ✅ Live at %s", submission.ID, info.EndpointURL)
+
+		// Construct and publish the event
+		port := 8080
+		if p, err := strconv.Atoi(info.HostPort); err == nil {
+			port = p
+		}
+
+		sandboxHost := os.Getenv("SANDBOX_HOST")
+		if sandboxHost == "" {
+			sandboxHost = "http://localhost"
+		}
+
+		event := model.SubmissionReadyEvent{
+			SubmissionID: submission.ID,
+			ContestantID: submission.TeamName,
+			EndpointURL:  sandboxHost,
+			Port:         port,
+			Language:     submission.Language,
+			SubmittedAt:  submission.SubmittedAt.Format(time.RFC3339),
+			CPULimit:     2,
+			MemoryLimit:  512,
+			Status:       "running",
+		}
+
+		ctx := context.Background()
+		if err := publisher.PublishSubmissionReady(ctx, event); err != nil {
+			log.Printf("[%s] ⚠️ Failed to publish submission.ready to Kafka: %v", submission.ID, err)
+		}
 	}()
 }
 

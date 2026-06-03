@@ -2,9 +2,12 @@ package main
 
 import (
 	"log"
+	"os"
 	"sandbox-engine/api"
 	"sandbox-engine/docker"
+	"sandbox-engine/publisher"
 	"sandbox-engine/store"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -20,6 +23,14 @@ func main() {
 	}
 	log.Println("🐳 Connected to Docker successfully")
 
+	brokersStr := os.Getenv("KAFKA_BROKERS")
+	if brokersStr == "" {
+		brokersStr = "localhost:9092"
+	}
+	brokers := strings.Split(brokersStr, ",")
+	publisher.Init(brokers)
+	defer publisher.Close()
+
 	api.InitRunner(runner)
 
 	router := gin.Default()
@@ -29,3 +40,4 @@ func main() {
 	log.Println("🚀 Sandbox Engine running on http://localhost:8080")
 	router.Run(":8080")
 }
+
