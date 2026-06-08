@@ -26,6 +26,7 @@ func RegisterRoutes(router *gin.Engine) {
 	router.GET("/submissions", handleListSubmissions)
 	router.GET("/submissions/:id", handleGetSubmission)
 	router.DELETE("/submissions/:id", handleStopSubmission)
+	router.DELETE("/sandbox/:containerID", handleContainerDeletion)
 }
 
 func handleSubmit(c *gin.Context) {
@@ -116,6 +117,7 @@ func handleSubmit(c *gin.Context) {
 			CPULimit:     2,
 			MemoryLimit:  512,
 			Status:       "running",
+			ContainerID:  info.ContainerID,
 		}
 
 		ctx := context.Background()
@@ -163,4 +165,13 @@ func handleStopSubmission(c *gin.Context) {
 
 	store.UpdateStatus(id, model.StatusCompleted)
 	c.JSON(http.StatusOK, gin.H{"message": "Container stopped successfully"})
+}
+
+func handleContainerDeletion(c *gin.Context) {
+	containerID := c.Param("containerID")
+	if err := runner.StopContainer(containerID); err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"status": "cleaned up container"})
 }

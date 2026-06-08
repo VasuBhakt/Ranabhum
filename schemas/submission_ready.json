@@ -7,6 +7,7 @@
     "submitted_at": "iso-8601",
     "cpu_limit": "integer (2)",
     "memory_limit_mb": "integer (2)",
-    "status": "uploaded | building | running | stress_testing | scored | failed"
+    "status": "uploaded | building | running | stress_testing | scored | failed",
+    "container_id": "string"
 }
 

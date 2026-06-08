@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os/signal"
 	"strings"
 	"sync"
@@ -84,6 +85,8 @@ func main() {
 		// Wait in background so we don't block the consumer.
 		go func() {
 			wg.Wait()
+			req, _ := http.NewRequest("DELETE", fmt.Sprintf("http://localhost:8080/sandbox/%s", event.ContainerID), nil)
+			http.DefaultClient.Do(req)
 			finalStatus := "DONE"
 			if ctx.Err() != nil {
 				finalStatus = "FAILED"

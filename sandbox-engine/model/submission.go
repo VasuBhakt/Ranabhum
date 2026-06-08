@@ -25,14 +25,14 @@ type Submission struct {
 }
 
 type SubmissionReadyEvent struct {
-	SubmissionID  string `json:"submission_id"`
-	ContestantID  string `json:"contestant_id"`
-	EndpointURL   string `json:"endpoint_url"`
-	Port          int    `json:"port"`
-	Language      string `json:"language"`
-	SubmittedAt   string `json:"submitted_at"` // ISO8601
-	CPULimit      int    `json:"cpu_limit"`
-	MemoryLimit   int    `json:"memory_limit_mb"`
-	Status        string `json:"status"`
+	SubmissionID string `json:"submission_id"`
+	ContestantID string `json:"contestant_id"`
+	EndpointURL  string `json:"endpoint_url"`
+	Port         int    `json:"port"`
+	Language     string `json:"language"`
+	SubmittedAt  string `json:"submitted_at"` // ISO8601
+	CPULimit     int    `json:"cpu_limit"`
+	MemoryLimit  int    `json:"memory_limit_mb"`
+	Status       string `json:"status"`
+	ContainerID  string `json:"container_id"`
 }
-
