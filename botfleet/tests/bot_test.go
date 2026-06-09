@@ -88,7 +88,7 @@ func TestBotFiresOrders(t *testing.T) {
 	var correctCount int
 	for _, m := range metrics {
 		totalLatency += m.LatencyNs
-		if m.FillCorrect {
+		if m.FillCorrect == 1 {
 			correctCount++
 		}
 	}

@@ -26,11 +26,13 @@ async def flush_batch(pg_conn, run_id):
     batch_counter[run_id] += 1
     await pg_conn.executemany("""
         INSERT INTO order_metrics 
-        (submission_id, run_id, order_id, order_type, 
-         sent_at, latency_ns, fill_correct, bot_id)
-        VALUES ($1, $2, $3, $4, 
-                to_timestamp($5::double precision / 1e9), 
-                $6, $7, $8)
+        (submission_id, run_id, order_id, bot_id, cancel_order_id, order_type, side,
+         price, quantity, sent_at, ack_at_ns, latency_ns, expected_fill_qty,
+         actual_fill_qty, expected_fill_price, actual_fill_price, fill_correct,
+         status, reject_reason)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                to_timestamp($10::double precision / 1e9), $11, $12, $13,
+                $14, $15, $16, $17, $18, $19)
     """, batch_buffer)
     batch_buffer.clear()
     print(f"📦 Run {run_id[:8]}... Batch #{batch_counter[run_id]} inserted {num_messages} messages")
@@ -85,11 +87,15 @@ async def consume_metrics():
             sub_id = data["submission_id"]
             run_id = data["run_id"]
             
-            # add to batch buffer
+            # add to batch buffer with all fields
             batch_buffer.append((
-                sub_id, run_id, data["order_id"], 
-                data["order_type"], data["sent_at_ns"], data["latency_ns"], 
-                data["fill_correct"], data["bot_id"]
+                sub_id, run_id, data["order_id"], data["bot_id"],
+                data.get("cancel_order_id"), data["order_type"], data.get("side"),
+                data.get("price"), data.get("quantity"),
+                data["sent_at_ns"], data.get("ack_at_ns"), data["latency_ns"],
+                data.get("expected_fill_qty"), data.get("actual_fill_qty"),
+                data.get("expected_fill_price"), data.get("actual_fill_price"),
+                data.get("fill_correct"), data.get("status"), data.get("reject_reason")
             ))
             
             # flush batch if we hit batch size

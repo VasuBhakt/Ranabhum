@@ -1,5 +1,6 @@
 {
     "order_id": "uuid-v4",
+    "submission_id": "uuid-v4",
     "order_type": "limit|market|cancel",
     "side": "buy|sell|null",
     "price": "float",

@@ -36,7 +36,7 @@ type BotMetrics struct {
 	ActualFillQty     int     `json:"actual_fill_qty"`
 	ExpectedFillPrice float64 `json:"expected_fill_price"`
 	ActualFillPrice   float64 `json:"actual_fill_price"`
-	FillCorrect       bool    `json:"fill_correct"`
+	FillCorrect       int     `json:"fill_correct"`
 	Status            string  `json:"status"`        // ack | partial_fill | filled | rejected | timeout
 	RejectReason      string  `json:"reject_reason"` // null | insufficient_liquidity | invalid_price | invalid_order
 }
@@ -44,6 +44,7 @@ type BotMetrics struct {
 // OrderRequest is the HTTP body sent to the MS1 sandbox REST endpoint.
 type OrderRequest struct {
 	OrderID       string  `json:"order_id"`
+	SubmissionID  string  `json:"submission_id"`
 	OrderType     string  `json:"order_type"` // limit | market | cancel
 	Side          string  `json:"side"`       // buy | sell | null
 	Price         float64 `json:"price"`      // ignored for market orders
