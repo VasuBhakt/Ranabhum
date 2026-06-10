@@ -98,7 +98,7 @@ func fireOrder(ctx context.Context, client *http.Client, cfg Config, onMetric Me
 	// default values if the request fails or sandbox returns garbage
 	status := "timeout"
 	rejectReason := ""
-	fillCorrect := false
+	fillCorrect := 0
 	var expectedFillQty, actualFillQty int
 	var expectedFillPrice, actualFillPrice float64
 
@@ -115,7 +115,9 @@ func fireOrder(ctx context.Context, client *http.Client, cfg Config, onMetric Me
 
 			// order is considered correct if it was acked, partially filled, or fully filled
 			// rejected or timeout = incorrect
-			fillCorrect = status == "ack" || status == "partial_fill" || status == "filled"
+			if (status == "ack" || status == "partial_fill" || status == "filled") {
+				fillCorrect = 1;
+			}
 		}
 	}
 

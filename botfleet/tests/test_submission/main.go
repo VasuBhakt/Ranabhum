@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -24,6 +25,7 @@ type OrderResponse struct {
 	ActualFillQty     int     `json:"actual_fill_qty"`
 	ExpectedFillPrice float64 `json:"expected_fill_price"`
 	ActualFillPrice   float64 `json:"actual_fill_price"`
+	RejectReason      string  `json:"reject_reason"`
 }
 
 // buffer pool to reduce GC pressure
@@ -33,6 +35,8 @@ var bufferPool = sync.Pool{
 	},
 }
 
+var requestCount uint64
+
 func handleOrder(w http.ResponseWriter, r *http.Request) {
 	// parse request
 	var req OrderRequest
@@ -41,15 +45,23 @@ func handleOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	status := "ack"
+	var rejectReason string
+	if atomic.AddUint64(&requestCount, 1)%10 == 0 {
+		status = "rejected"
+		rejectReason = "simulated rejection"
+	}
+
 	// build response with minimal allocations
 	resp := OrderResponse{
 		OrderID:           req.OrderID,
-		Status:            "ack",
+		Status:            status,
 		AckedAtNs:         time.Now().UnixNano(),
 		ExpectedFillQty:   req.Quantity,
 		ActualFillQty:     req.Quantity,
 		ExpectedFillPrice: req.Price,
 		ActualFillPrice:   req.Price,
+		RejectReason:      rejectReason,
 	}
 
 	// set headers
@@ -65,14 +77,14 @@ func handleOrder(w http.ResponseWriter, r *http.Request) {
 func main() {
 	// use keep-alive enabled server for connection reuse
 	server := &http.Server{
-		Addr:         ":9000",
+		Addr:         ":8080",
 		Handler:      http.HandlerFunc(handleOrder),
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
 		IdleTimeout:  30 * time.Second,
 	}
 
-	log.Println("optimized order server running on :9000")
+	log.Println("optimized order server running on :8080")
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}

@@ -43,7 +43,12 @@ func main() {
 	// Handler called when a new submission arrives.
 	handler := func(ctx context.Context, event bot.SubmissionReady) error {
 		runID := uuid.NewString()
-		targetURL := fmt.Sprintf("%s:%d", event.EndpointURL, event.Port)
+		var targetURL string
+		if event.Port > 0 {
+			targetURL = fmt.Sprintf("%s:%d", event.EndpointURL, event.Port)
+		} else {
+			targetURL = event.EndpointURL
+		}
 
 		run := bot.RunState{
 			RunID:        runID,

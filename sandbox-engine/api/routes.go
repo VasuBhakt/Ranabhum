@@ -4,12 +4,15 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"sandbox-engine/docker"
 	"sandbox-engine/model"
 	"sandbox-engine/publisher"
 	"sandbox-engine/store"
 	"strconv"
+	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,6 +30,7 @@ func RegisterRoutes(router *gin.Engine) {
 	router.GET("/submissions/:id", handleGetSubmission)
 	router.DELETE("/submissions/:id", handleStopSubmission)
 	router.DELETE("/sandbox/:containerID", handleContainerDeletion)
+	router.POST("/sandbox/:id/order", handleProxyOrder)
 }
 
 func handleSubmit(c *gin.Context) {
@@ -107,11 +111,13 @@ func handleSubmit(c *gin.Context) {
 			sandboxHost = "http://localhost"
 		}
 
+		proxyURL := fmt.Sprintf("%s:%d/sandbox/%s", sandboxHost, port, submission.ID)
+
 		event := model.SubmissionReadyEvent{
 			SubmissionID: submission.ID,
 			ContestantID: submission.TeamName,
-			EndpointURL:  sandboxHost,
-			Port:         port,
+			EndpointURL:  proxyURL,
+			Port:         0,
 			Language:     submission.Language,
 			SubmittedAt:  submission.SubmittedAt.Format(time.RFC3339),
 			CPULimit:     2,
@@ -174,4 +180,29 @@ func handleContainerDeletion(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"status": "cleaned up container"})
+}
+
+func handleProxyOrder(c *gin.Context) {
+	id := c.Param("id")
+	submission, found := store.GetSubmission(id)
+	if !found {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Submission not found"})
+		return
+	}
+
+	target, err := url.Parse(submission.EndpointURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid endpoint URL"})
+		return
+	}
+
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	
+	originalDirector := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		originalDirector(req)
+		req.URL.Path = "/order" // target container expects /order
+	}
+
+	proxy.ServeHTTP(c.Writer, c.Request)
 }
