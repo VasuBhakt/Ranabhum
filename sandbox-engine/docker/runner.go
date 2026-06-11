@@ -73,10 +73,16 @@ func (r *Runner) DeploySubmission(submissionID, zipPath, language string) (*Cont
 		return nil, fmt.Errorf("failed to start container: %w", err)
 	}
 
+	sandboxHost := os.Getenv("SANDBOX_HOST")
+	if sandboxHost == "" {
+		sandboxHost = "http://localhost"
+	}
+	sandboxHost = strings.TrimSuffix(sandboxHost, "/")
+
 	return &ContainerInfo{
 		ContainerID: containerID,
 		HostPort:    hostPort,
-		EndpointURL: fmt.Sprintf("http://localhost:%s", hostPort),
+		EndpointURL: fmt.Sprintf("%s:%s", sandboxHost, hostPort),
 	}, nil
 }
 

@@ -19,7 +19,7 @@ services:
     ports:
       - "8081:8080"
     environment:
-      KAFKA_BROKERS: redpanda:29092
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-redpanda:29092}
     depends_on:
       - redpanda
 
@@ -33,7 +33,7 @@ services:
     ports:
       - "5433:5432"
     environment:
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
 
   # --- MICROSERVICES ---
   sandbox-engine:
@@ -43,8 +43,8 @@ services:
     ports:
       - "8080:8080"
     environment:
-      KAFKA_BROKERS: redpanda:29092
-      SANDBOX_HOST: http://host.docker.internal # resolves to host machine where sandbox containers' ports are bound
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-redpanda:29092}
+      SANDBOX_HOST: ${SANDBOX_HOST:-http://host.docker.internal} # resolves to host machine where sandbox containers' ports are bound
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock # Mount host docker socket to deploy contestant sandboxes on host
     extra_hosts:
@@ -57,13 +57,12 @@ services:
       context: ./botfleet
       dockerfile: Dockerfile
     command: ["/coordinator"]
+    env_file:
+      - ./botfleet/.env
     environment:
-      KAFKA_BROKERS: redpanda:29092
-      REDIS_ADDR: redis:6379
-      BOT_COUNT: 3
-      RATE_PER_BOT: 10
-      RUN_DURATION: 30s
-      SANDBOX_ENGINE_URL: http://sandbox-engine:8080
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-redpanda:29092}
+      REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
+      SANDBOX_ENGINE_URL: ${SANDBOX_ENGINE_URL:-http://sandbox-engine:8080}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -77,8 +76,8 @@ services:
     ports:
       - "8001:8001"
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@timescaledb:5432/postgres
-      REDIS_URL: redis://redis:6379
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@timescaledb:5432/postgres}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     depends_on:
       - timescaledb
       - redis
@@ -89,10 +88,10 @@ services:
       dockerfile: Dockerfile
     command: ["python", "-m", "app.consumer.kafka_consumer"]
     environment:
-      DATABASE_URL: postgresql://postgres:postgres@timescaledb:5432/postgres
-      REDIS_URL: redis://redis:6379
-      KAFKA_BROKERS: redpanda:29092
-      TELEMETRY_API_URL: http://telemetry-api:8001
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@timescaledb:5432/postgres}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-redpanda:29092}
+      TELEMETRY_API_URL: ${TELEMETRY_API_URL:-http://telemetry-api:8001}
     depends_on:
       - timescaledb
       - redis

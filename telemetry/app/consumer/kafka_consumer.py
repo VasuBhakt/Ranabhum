@@ -17,26 +17,39 @@ batch_buffer = []
 BATCH_SIZE = 100
 batch_counter = {}  # track batches per run_id
 
+db_lock = asyncio.Lock()
+
 async def flush_batch(pg_conn, run_id):
     """Insert batched messages to DB."""
     if not batch_buffer:
         return
-    num_messages = len(batch_buffer)
+    
+    # Synchronously copy and clear the buffer to prevent race conditions
+    to_insert = list(batch_buffer)
+    batch_buffer.clear()
+    
+    num_messages = len(to_insert)
     if run_id not in batch_counter:
         batch_counter[run_id] = 0
     batch_counter[run_id] += 1
-    await pg_conn.executemany("""
-        INSERT INTO order_metrics 
-        (submission_id, run_id, order_id, bot_id, cancel_order_id, order_type, side,
-         price, quantity, sent_at, ack_at_ns, latency_ns, expected_fill_qty,
-         actual_fill_qty, expected_fill_price, actual_fill_price, fill_correct,
-         status, reject_reason)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
-                to_timestamp($10::double precision / 1e9), $11, $12, $13,
-                $14, $15, $16, $17, $18, $19)
-    """, batch_buffer)
-    batch_buffer.clear()
+    
+    async def _do_insert():
+        async with db_lock:
+            await pg_conn.executemany("""
+                INSERT INTO order_metrics 
+                (submission_id, run_id, order_id, bot_id, cancel_order_id, order_type, side,
+                 price, quantity, sent_at, ack_at_ns, latency_ns, expected_fill_qty,
+                 actual_fill_qty, expected_fill_price, actual_fill_price, fill_correct,
+                 status, reject_reason)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                        to_timestamp($10::double precision / 1e9), $11, $12, $13,
+                        $14, $15, $16, $17, $18, $19)
+            """, to_insert)
+
+    # Shield the database insert from task cancellation to prevent connection issues or data loss
+    await asyncio.shield(_do_insert())
     print(f"📦 Run {run_id[:8]}... Batch #{batch_counter[run_id]} inserted {num_messages} messages")
+
 
 async def score_after_delay(sub_id, run_id, pg_conn, redis_client, delay=5):
     """Wait `delay` seconds after last message, then compute final score."""
@@ -45,6 +58,9 @@ async def score_after_delay(sub_id, run_id, pg_conn, redis_client, delay=5):
     # if a newer message came in during sleep, this task is stale — abort
     if run_last_seen.get(run_id, 0) > asyncio.get_event_loop().time() - delay:
         return
+    
+    # Flush any remaining messages in the buffer before scoring
+    await flush_batch(pg_conn, run_id)
     
     print(f"\n✅ Run {run_id} complete, computing final score...")
     new_score = await compute_scores(sub_id, run_id)
