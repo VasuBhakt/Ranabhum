@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telemetry-consumer
+  labels:
+    app: telemetry-consumer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: telemetry-consumer
+  template:
+    metadata:
+      labels:
+        app: telemetry-consumer
+    spec:
+      containers:
+      - name: telemetry-consumer
+        image: telemetry:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python", "-m", "app.consumer.kafka_consumer"]
+        env:
+        - name: DATABASE_URL
+          value: postgresql://postgres:postgres@timescaledb:5432/postgres
+        - name: REDIS_URL
+          value: redis://redis:6379
+        - name: KAFKA_BROKERS
+          value: redpanda:29092
+        - name: TELEMETRY_API_URL
+          value: http://telemetry-api:8001

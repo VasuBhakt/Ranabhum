@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telemetry-frontend
+  labels:
+    app: telemetry-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: telemetry-frontend
+  template:
+    metadata:
+      labels:
+        app: telemetry-frontend
+    spec:
+      containers:
+      - name: telemetry-frontend
+        image: telemetry-frontend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: telemetry-frontend
+spec:
+  ports:
+  - port: 80
+    targetPort: 80
+    nodePort: 30082
+  type: NodePort
+  selector:
+    app: telemetry-frontend
