@@ -34,8 +34,9 @@ async def get_leaderboard(client) -> list:
 if __name__ == "__main__":
     async def test_redis():
         print("Connecting to Redis...")
-        # Using the modern redis.asyncio connection
-        client = await redis.from_url("redis://localhost:6379")
+        import os
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+        client = await redis.from_url(redis_url)
         
         # A dummy score to test our functions
         dummy_score = {

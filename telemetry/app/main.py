@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import redis.asyncio as redis
 import asyncpg
 import json
+import os
 
 from app.db.redis_store import get_leaderboard
 
@@ -18,10 +19,13 @@ app.add_middleware(
 
 connected_clients = []
 
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5433/postgres")
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+
 @app.get("/health")
 async def health():
     try:
-        conn = await asyncpg.connect("postgresql://postgres:postgres@localhost:5433/postgres")
+        conn = await asyncpg.connect(DATABASE_URL)
         await conn.fetchval("SELECT 1")
         await conn.close()
         return {"service": "telemetry", "database": "ok"}
@@ -30,7 +34,7 @@ async def health():
 
 @app.get("/leaderboard")
 async def fetch_leaderboard():
-    client = await redis.from_url("redis://localhost:6379")
+    client = await redis.from_url(REDIS_URL)
     board = await get_leaderboard(client)
     await client.aclose()
     return board

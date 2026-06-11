@@ -1,8 +1,10 @@
 import asyncpg
 import asyncio
+import os
 
 async def compute_scores(submission_id: str, run_id: str) -> dict:
-    conn = await asyncpg.connect("postgresql://postgres:postgres@localhost:5433/postgres")
+    db_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5433/postgres")
+    conn = await asyncpg.connect(db_url)
     
     try:
         # single query combines all stats

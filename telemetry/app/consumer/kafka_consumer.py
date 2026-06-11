@@ -3,6 +3,7 @@ import asyncio
 import asyncpg
 import urllib.request
 import redis.asyncio as redis
+import os
 from aiokafka import AIOKafkaConsumer
 from app.scoring.engine import compute_scores
 from app.db.redis_store import update_leaderboard
@@ -52,8 +53,9 @@ async def score_after_delay(sub_id, run_id, pg_conn, redis_client, delay=5):
     
     # broadcast to React
     try:
+        api_url = os.getenv("TELEMETRY_API_URL", "http://localhost:8001")
         req = urllib.request.Request(
-            'http://localhost:8001/broadcast',
+            f"{api_url}/broadcast",
             data=json.dumps(new_score).encode('utf-8'),
             headers={'Content-Type': 'application/json'}
         )
@@ -67,18 +69,73 @@ async def score_after_delay(sub_id, run_id, pg_conn, redis_client, delay=5):
     run_score_tasks.pop(run_id, None)
 
 async def consume_metrics():
-    pg_conn = await asyncpg.connect("postgresql://postgres:postgres@localhost:5433/postgres")
-    redis_client = await redis.from_url("redis://localhost:6379")
+    db_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5433/postgres")
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+    kafka_brokers = os.getenv("KAFKA_BROKERS", "localhost:9092")
     
+    # Connection retry loop for database
+    pg_conn = None
+    for attempt in range(15):
+        try:
+            pg_conn = await asyncpg.connect(db_url)
+            print("💾 Connected to TimescaleDB successfully")
+            break
+        except Exception as e:
+            print(f"Waiting for TimescaleDB to be ready (attempt {attempt + 1}/15)...")
+            await asyncio.sleep(2)
+    if pg_conn is None:
+        raise Exception("Could not connect to database after 15 attempts")
+
+    # Auto-initialize database schema if not present
+    try:
+        table_exists = await pg_conn.fetchval("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'order_metrics'
+            )
+        """)
+        if not table_exists:
+            print("🧱 Table 'order_metrics' not found. Initializing schema...")
+            schema_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "db", "schema.sql")
+            with open(schema_path, "r") as f:
+                schema_sql = f.read()
+            # Split by semicolon and execute non-empty statements
+            for statement in schema_sql.split(";"):
+                stmt = statement.strip()
+                if stmt:
+                    await pg_conn.execute(stmt)
+            print("✅ Database schema initialized successfully")
+    except Exception as e:
+        print(f"⚠️ Failed to auto-initialize database schema: {e}")
+
+    # Connection retry loop for Redis
+    redis_client = await redis.from_url(redis_url)
+    for attempt in range(15):
+        try:
+            await redis_client.ping()
+            print("🧠 Connected to Redis successfully")
+            break
+        except Exception as e:
+            print(f"Waiting for Redis to be ready (attempt {attempt + 1}/15)...")
+            await asyncio.sleep(2)
+
     consumer = AIOKafkaConsumer(
         "bot.metrics",
-        bootstrap_servers="localhost:9092",
+        bootstrap_servers=kafka_brokers,
         group_id="telemetry-consumer",
         value_deserializer=lambda m: json.loads(m.decode("utf-8")),
         auto_offset_reset="latest"
     )
     
-    await consumer.start()
+    # Connection retry loop for Kafka/Redpanda
+    for attempt in range(15):
+        try:
+            await consumer.start()
+            print("⚡ Connected to Redpanda successfully")
+            break
+        except Exception as e:
+            print(f"Waiting for Redpanda to be ready (attempt {attempt + 1}/15)...")
+            await asyncio.sleep(2)
     print("⚡ Live Pipeline Started! Waiting for bot telemetry...")
     
     try:

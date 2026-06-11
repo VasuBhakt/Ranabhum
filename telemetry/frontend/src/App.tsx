@@ -12,8 +12,17 @@ export default function App() {
   const [leaderboard, setLeaderboard] = useState<Score[]>([])
 
   useEffect(() => {
+    // Dynamically calculate the API base URL to support local dev and cloud NodePorts
+    const protocol = window.location.protocol;
+    const wsProtocol = protocol === "https:" ? "wss:" : "ws:";
+    const hostname = window.location.hostname;
+    
+    // Check for build-time environment variable overrides, otherwise fallback to host port 8001
+    const apiBase = (import.meta.env.VITE_API_URL as string) || `${protocol}//${hostname}:8001`;
+    const wsBase = (import.meta.env.VITE_WS_URL as string) || `${wsProtocol}//${hostname}:8001`;
+
     // 1. Fetch the initial leaderboard data from your REST API
-    fetch("http://localhost:8001/leaderboard")
+    fetch(`${apiBase}/leaderboard`)
       .then(r => r.json())
       .then(data => {
         const sorted = data.sort((a: Score, b: Score) => b.score - a.score)
@@ -21,7 +30,7 @@ export default function App() {
       })
 
     // 2. Connect to the FastAPI WebSocket for live updates
-    const ws = new WebSocket("ws://localhost:8001/ws/leaderboard")
+    const ws = new WebSocket(`${wsBase}/ws/leaderboard`)
 
     ws.onmessage = (event) => {
       const newScore: Score = JSON.parse(event.data)
