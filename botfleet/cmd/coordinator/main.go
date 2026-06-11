@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
 	"strings"
 	"sync"
@@ -90,8 +91,25 @@ func main() {
 		// Wait in background so we don't block the consumer.
 		go func() {
 			wg.Wait()
-			req, _ := http.NewRequest("DELETE", fmt.Sprintf("http://localhost:8080/sandbox/%s", event.ContainerID), nil)
-			http.DefaultClient.Do(req)
+			
+			sandboxEngineURL := os.Getenv("SANDBOX_ENGINE_URL")
+			if sandboxEngineURL == "" {
+				sandboxEngineURL = "http://localhost:8080"
+			}
+			url := fmt.Sprintf("%s/submissions/%s", sandboxEngineURL, event.SubmissionID)
+			log.Printf("[coordinator] run_id=%s cleaning up container for submission_id=%s via %s", runID, event.SubmissionID, url)
+			
+			req, err := http.NewRequest("DELETE", url, nil)
+			if err == nil {
+				resp, err := http.DefaultClient.Do(req)
+				if err == nil {
+					resp.Body.Close()
+					log.Printf("[coordinator] run_id=%s container cleanup request sent successfully", runID)
+				} else {
+					log.Printf("[coordinator] run_id=%s container cleanup failed: %v", runID, err)
+				}
+			}
+
 			finalStatus := "DONE"
 			if ctx.Err() != nil {
 				finalStatus = "FAILED"

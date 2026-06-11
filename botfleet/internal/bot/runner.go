@@ -35,7 +35,16 @@ type MetricsCallback func(m BotMetrics)
 // Each order is fired in a separate goroutine (go fireOrder) so they don't
 // block each other — this is how we achieve high concurrency.
 func Run(ctx context.Context, cfg Config, onMetric MetricsCallback) error {
-	client := &http.Client{Timeout: 5 * time.Second}
+	// Optimize Transport to reuse connections and avoid socket exhaustion
+	transport := &http.Transport{
+		MaxIdleConns:        500,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     30 * time.Second,
+	}
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   5 * time.Second,
+	}
 
 	// ticker fires once every (1/RatePerSec) seconds
 	// e.g. RatePerSec=50 means ticker fires every 20ms
