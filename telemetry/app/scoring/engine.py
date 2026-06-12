@@ -2,9 +2,15 @@ import asyncpg
 import asyncio
 import os
 
-async def compute_scores(submission_id: str, run_id: str) -> dict:
-    db_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5433/postgres")
-    conn = await asyncpg.connect(db_url)
+async def compute_scores(submission_id: str, run_id: str, db_pool=None) -> dict:
+    # Use pool if provided, otherwise fall back to direct connection (for standalone testing)
+    if db_pool:
+        conn = await db_pool.acquire()
+        release = lambda: db_pool.release(conn)
+    else:
+        db_url = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5433/postgres")
+        conn = await asyncpg.connect(db_url)
+        release = conn.close
     
     try:
         # single query combines all stats
@@ -40,7 +46,7 @@ async def compute_scores(submission_id: str, run_id: str) -> dict:
             "score": round(score, 4)
         }
     finally:
-        await conn.close()
+        await release()
 
 if __name__ == "__main__":
     print("Testing scoring engine...")
