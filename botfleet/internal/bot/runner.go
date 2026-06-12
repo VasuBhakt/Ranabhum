@@ -46,10 +46,12 @@ func Run(ctx context.Context, cfg Config, onMetric MetricsCallback) error {
 		Timeout:   5 * time.Second,
 	}
 
-	// ticker fires once every (1/RatePerSec) seconds
-	// e.g. RatePerSec=50 means ticker fires every 20ms
+	// Ticker fires once every (1/RatePerSec) seconds
 	ticker := time.NewTicker(time.Second / time.Duration(cfg.RatePerSec))
 	defer ticker.Stop()
+
+	// Concurrency semaphore to prevent goroutine bloat and socket exhaustion
+	sem := make(chan struct{}, 100)
 
 	// deadline is when this bot should stop firing orders
 	deadline := time.Now().Add(cfg.Duration)
@@ -58,17 +60,23 @@ func Run(ctx context.Context, cfg Config, onMetric MetricsCallback) error {
 		select {
 		case <-ctx.Done():
 			// context was cancelled (e.g. coordinator is shutting down)
-			// return cleanly without an error
 			return ctx.Err()
 		case t := <-ticker.C:
 			// ticker fired — time to send another order
 			if t.After(deadline) {
-				// we've run for the full duration, stop cleanly
 				return nil
 			}
-			// fire the order in a goroutine so we don't block the ticker
-			// this means multiple orders can be in-flight at the same time
-			go fireOrder(ctx, client, cfg, onMetric)
+			
+			// Acquire semaphore slot with context cancellation safety
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case sem <- struct{}{}:
+				go func() {
+					defer func() { <-sem }()
+					fireOrder(ctx, client, cfg, onMetric)
+				}()
+			}
 		}
 	}
 }
