@@ -24,5 +24,5 @@ CREATE TABLE IF NOT EXISTS order_metrics (
 
 SELECT create_hypertable('order_metrics', 'sent_at', if_not_exists => TRUE);
 
-CREATE INDEX IF NOT EXISTS idx_submission
-ON order_metrics (submission_id, sent_at DESC);
+CREATE INDEX IF NOT EXISTS idx_submission_run
+ON order_metrics (submission_id, run_id, sent_at DESC);

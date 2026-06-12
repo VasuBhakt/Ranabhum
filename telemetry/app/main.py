@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 import redis.asyncio as redis
@@ -7,7 +8,21 @@ import os
 
 from app.db.redis_store import get_leaderboard
 
-app = FastAPI()
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5433/postgres")
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+
+connected_clients = []
+redis_client = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global redis_client
+    redis_client = await redis.from_url(REDIS_URL)
+    print("🧠 Telemetry API: Redis client initialized")
+    yield
+    await redis_client.aclose()
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -16,11 +31,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-connected_clients = []
-
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5433/postgres")
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
 @app.get("/health")
 async def health():
@@ -34,9 +44,7 @@ async def health():
 
 @app.get("/leaderboard")
 async def fetch_leaderboard():
-    client = await redis.from_url(REDIS_URL)
-    board = await get_leaderboard(client)
-    await client.aclose()
+    board = await get_leaderboard(redis_client)
     return board
 
 # --- NEW: The Bridge ---
