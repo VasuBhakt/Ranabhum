@@ -22,6 +22,7 @@ func New(brokers []string) *MetricsPublisher {
 		Topic:                  TopicBotMetrics,
 		Balancer:               &kafka.Hash{}, // partition by submission_id for ordering
 		AllowAutoTopicCreation: false,
+		Async:                  true, // Enable asynchronous batch writes for low latency and high throughput
 	}
 	return &MetricsPublisher{writer: w}
 }
