@@ -33,6 +33,12 @@ func IsValidArchive(filename string) bool {
 }
 
 func SaveSubmission(fileHeader *multipart.FileHeader, teamName, language string) (model.Submission, error) {
+	// Reject uploads larger than 50MB to prevent disk exhaustion
+	const maxUploadSize = 50 << 20 // 50 MB
+	if fileHeader.Size > maxUploadSize {
+		return model.Submission{}, fmt.Errorf("file too large: %d bytes (max %d)", fileHeader.Size, maxUploadSize)
+	}
+
 	id := uuid.New().String()
 	safeFilename := fmt.Sprintf("%s_%s", id, filepath.Base(fileHeader.Filename))
 	destPath := filepath.Join(uploadsDir, safeFilename)
