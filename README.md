@@ -17,12 +17,12 @@ Ranabhum is a highly scalable, event-driven benchmark and real-time telemetry pi
 ```text
 ├── botfleet/                 # Load generator bots and coordinator (Go)
 │   ├── cmd/                  # Executable entrypoints (coordinator, worker)
-│   ├── internal/             # Core benchmark logic, Kafka publishers, & models
-│   └── tests/                # Local stress-test scripts and mock contestant files
+│   └── internal/             # Core benchmark logic, Kafka publishers, & models
+├── tests/                    # Local integration tests and mock contestant files
 ├── sandbox-engine/           # Submission compiler and container runner (Go)
 ├── telemetry/                # Analytics and metric aggregation service (Python)
 │   ├── app/                  # FastAPI endpoints, TimescaleDB schema, consumer loops
-│   └── frontend/             # Leaderboard UI (React + Tailwind + WebSockets)
+│   └── frontend/             # Leaderboard UI (React + TypeScript + WebSockets)
 ├── k8s/                      # Cloud-agnostic Kubernetes manifests (yaml)
 ├── terraform/                # Terraform GCP provisioning scripts (HCL)
 ├── docker-compose.yml        # Unified local stack deployment configuration
@@ -50,9 +50,17 @@ docker compose up -d --build
 * 💾 **Telemetry REST API**: [http://localhost:8001/health](http://localhost:8001/health)
 
 ### 3. Run a test submission:
-Send a mock contestant zip submission (which contains an optimized order matching server in Go) to the Sandbox Engine:
+Send a mock contestant zip submission (which contains an optimized order matching server in Go, C++, or Rust) to the Sandbox Engine:
+
 ```bash
-curl -F "team_name=titans" -F "language=go" -F "file=@./botfleet/tests/test_submission.zip" http://localhost:8080/submit
+# Go submission (titans)
+curl -F "team_name=titans" -F "language=go" -F "file=@./tests/test_submission.zip" http://localhost:8080/submit
+
+# C++ submission (gladiators)
+curl -F "team_name=gladiators" -F "language=cpp" -F "file=@./tests/cpp_submission.zip" http://localhost:8080/submit
+
+# Rust submission (vikings)
+curl -F "team_name=vikings" -F "language=rust" -F "file=@./tests/rust_submission.zip" http://localhost:8080/submit
 ```
 
 ### 4. Monitor live telemetry consumption:
