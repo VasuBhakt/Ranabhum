@@ -54,13 +54,13 @@ graph TD
 ## 3. Performance Engineering
 
 ### 3.1 Backpressure via Concurrency Semaphore
-Each bot uses a buffered channel (`cap=100`) as a semaphore. The ticker acquires a slot before spawning a goroutine; the goroutine releases it on completion. If the contestant sandbox slows down, the semaphore fills and the ticker blocks — applying backpressure instead of unbounded goroutine/socket growth.
+Each bot uses a buffered channel (`cap=100`) as a semaphore. The ticker acquires a slot before spawning a goroutine; the goroutine releases it on completion. If the contestant sandbox slows down, the semaphore fills and the ticker blocks, applying backpressure instead of unbounded goroutine/socket growth.
 
 ### 3.2 Async Kafka Writes
-The Segmentio `kafka.Writer` is configured with `Async: true`. Metrics are buffered in-process and flushed to Redpanda in batches. This eliminates per-message network round-trips from the hot path — the bot runner never blocks on broker acknowledgement.
+The Segmentio `kafka.Writer` is configured with `Async: true`. Metrics are buffered in-process and flushed to Redpanda in batches. This eliminates per-message network round-trips from the hot path; the bot runner never blocks on broker acknowledgement.
 
 ### 3.3 Database Connection Pooling
-The telemetry consumer initializes an `asyncpg.create_pool(min_size=2, max_size=10)`. All write paths — batch inserts and score aggregation — acquire connections from this pool. This supports concurrent run scoring without connection serialization.
+The telemetry consumer initializes an `asyncpg.create_pool(min_size=2, max_size=10)`. All write paths i.e., batch inserts and score aggregation, acquire connections from this pool. This supports concurrent run scoring without connection serialization.
 
 ### 3.4 Batch Inserts with Async-Safe Buffering
 Messages are accumulated in a list buffer (`BATCH_SIZE=100`). On flush, the buffer is synchronously copied and cleared before any `await`, preventing new messages from being appended mid-write and then lost on `clear()`. The database insert is wrapped in `asyncio.shield()` to survive task cancellation.
@@ -69,7 +69,7 @@ Messages are accumulated in a list buffer (`BATCH_SIZE=100`). On flush, the buff
 ```sql
 CREATE INDEX idx_submission_run ON order_metrics (submission_id, run_id, sent_at DESC);
 ```
-The scoring query filters on `submission_id` and `run_id` — a composite index eliminates full-table scans as historical runs accumulate.
+The scoring query filters on `submission_id` and `run_id`; a composite index eliminates full-table scans as historical runs accumulate.
 
 ### 3.6 Two-Phase Correctness Validation (Accuracy & FIFO)
 To solve the "Observer Effect" in distributed systems (where concurrent load generation makes deterministic order sequencing impossible), we employ a **Two-Phase Benchmarking Strategy**:
@@ -88,7 +88,7 @@ Untrusted contestant code runs inside containers with zero-trust defaults:
 
 | Flag | Purpose |
 |------|---------|
-| `--cap-drop ALL` | Strips all Linux capabilities — no raw sockets, no device mounts |
+| `--cap-drop ALL` | Strips all Linux capabilities; no raw sockets, no device mounts |
 | `--security-opt no-new-privileges` | Blocks SUID/SGID privilege escalation |
 | `--read-only` | Immutable root filesystem |
 | `--pids-limit 64` | Fork-bomb mitigation |
@@ -96,7 +96,7 @@ Untrusted contestant code runs inside containers with zero-trust defaults:
 
 ### 4.2 Upload & Build Guards
 - **50MB upload limit** enforced at the application layer before disk write.
-- **120-second build timeout** via `context.WithTimeout` on `docker build` — kills hanging or malicious Dockerfiles.
+- **300-second build timeout** via `context.WithTimeout` on `docker build`, kills hanging or malicious Dockerfiles.
 - Archive extraction uses `filepath.Base()` on all entry names, stripping directory traversal paths (Zip Slip mitigation).
 
 ### 4.3 Network Isolation
@@ -111,5 +111,5 @@ On GKE, host Docker socket mounting is blocked by security policies. We run a Di
 
 ### Infrastructure as Code
 - **Terraform**: GKE Standard cluster with preemptible `e2-medium` nodes (privileged mode support, 70% cost reduction).
-- **Kubernetes**: Cloud-agnostic manifests in `k8s/` — identical deployment on any conformant cluster.
+- **Kubernetes**: Cloud-agnostic manifests in `k8s/`; identical deployment on any conformant cluster.
 - **Docker Compose**: Single-command local stack with environment variable interpolation from `.env`.

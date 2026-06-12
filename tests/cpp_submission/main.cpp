@@ -213,16 +213,34 @@ public:
 OrderBook global_book;
 
 void handle_client(int client_fd) {
+    std::string req;
     char buffer[4096];
-    std::memset(buffer, 0, sizeof(buffer));
+    while (true) {
+        std::memset(buffer, 0, sizeof(buffer));
+        int bytes_read = read(client_fd, buffer, sizeof(buffer) - 1);
+        if (bytes_read <= 0) break;
+        req.append(buffer, bytes_read);
+        
+        size_t body_pos = req.find("\r\n\r\n");
+        if (body_pos != std::string::npos) {
+            size_t cl_pos = req.find("Content-Length: ");
+            if (cl_pos != std::string::npos) {
+                size_t cl_end = req.find("\r\n", cl_pos);
+                if (cl_end != std::string::npos) {
+                    int cl = std::stoi(req.substr(cl_pos + 16, cl_end - cl_pos - 16));
+                    if (req.size() >= body_pos + 4 + cl) break;
+                }
+            } else {
+                break; // No Content-Length, assume done after headers
+            }
+        }
+    }
     
-    int bytes_read = read(client_fd, buffer, sizeof(buffer) - 1);
-    if (bytes_read <= 0) {
+    if (req.empty()) {
         close(client_fd);
         return;
     }
     
-    std::string req(buffer);
     size_t body_pos = req.find("\r\n\r\n");
     if (body_pos == std::string::npos) {
         body_pos = req.find("\n\n");
@@ -274,7 +292,7 @@ void handle_client(int client_fd) {
     http_resp << "HTTP/1.1 200 OK\r\n"
               << "Content-Type: application/json\r\n"
               << "Content-Length: " << response_body.size() << "\r\n"
-              << "Connection: keep-alive\r\n"
+              << "Connection: close\r\n"
               << "\r\n"
               << response_body;
               

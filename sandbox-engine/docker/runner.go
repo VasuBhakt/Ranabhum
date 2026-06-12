@@ -89,8 +89,9 @@ func (r *Runner) DeploySubmission(submissionID, zipPath, language string) (*Cont
 }
 
 func (r *Runner) buildImage(contextDir, imageName string) error {
-	// 120-second timeout prevents malicious Dockerfiles from hanging the engine
-	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	// 300-second timeout prevents malicious Dockerfiles from hanging the engine
+	// Note: Set higher than 120s to allow time for pulling large base images initially
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "docker", "build", "-t", imageName, contextDir)
@@ -98,7 +99,7 @@ func (r *Runner) buildImage(contextDir, imageName string) error {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("docker build timed out after 120s")
+			return fmt.Errorf("docker build timed out after 300s")
 		}
 		return fmt.Errorf("docker build failed: %w", err)
 	}

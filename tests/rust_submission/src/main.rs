@@ -222,20 +222,37 @@ lazy_static::lazy_static! {
 }
 
 fn handle_client(mut stream: TcpStream) {
+    let mut req = String::new();
     let mut buffer = [0; 4096];
-    if let Ok(bytes_read) = stream.read(&mut buffer) {
-        if bytes_read == 0 {
-            return;
-        }
-        
-        let req = String::from_utf8_lossy(&buffer[..bytes_read]);
-        let body = if let Some(pos) = req.find("\r\n\r\n") {
-            &req[pos + 4..]
-        } else if let Some(pos) = req.find("\n\n") {
-            &req[pos + 2..]
-        } else {
-            ""
-        };
+    loop {
+        if let Ok(bytes_read) = stream.read(&mut buffer) {
+            if bytes_read == 0 { break; }
+            req.push_str(&String::from_utf8_lossy(&buffer[..bytes_read]));
+            
+            if let Some(body_pos) = req.find("\r\n\r\n") {
+                if let Some(cl_pos) = req.find("Content-Length: ") {
+                    if let Some(cl_end) = req[cl_pos..].find("\r\n") {
+                        let cl_str = &req[cl_pos + 16..cl_pos + cl_end];
+                        if let Ok(cl) = cl_str.trim().parse::<usize>() {
+                            if req.len() >= body_pos + 4 + cl {
+                                break;
+                            }
+                        } else { break; }
+                    } else { break; }
+                } else { break; }
+            }
+        } else { break; }
+    }
+    
+    if req.is_empty() { return; }
+    
+    let body = if let Some(pos) = req.find("\r\n\r\n") {
+        &req[pos + 4..]
+    } else if let Some(pos) = req.find("\n\n") {
+        &req[pos + 2..]
+    } else {
+        ""
+    };
         
         let order_id = get_json_string(body, "order_id");
         let order_type = get_json_string(body, "order_type");
@@ -261,7 +278,7 @@ fn handle_client(mut stream: TcpStream) {
         );
         
         let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{}",
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             response_body.len(),
             response_body
         );
