@@ -37,11 +37,15 @@ Ranabhum is a highly scalable, event-driven benchmark and real-time telemetry pi
 The entire platform can be brought up locally in a single command.
 
 ### 1. Spin up the entire infrastructure:
-Make sure Docker is running on your host machine. In the root directory:
+Make sure Docker is running on your host machine. In the root directory, first create your environment file:
+```bash
+cp .env.example .env
+```
+Then start the stack:
 ```bash
 docker compose up -d --build
 ```
-*(All service environment variables are loaded dynamically from the root `.env` file.)*
+*(All service environment variables are loaded dynamically from the root `.env` file you just created.)*
 
 ### 2. Verify local developer portals:
 * 🏆 **React Leaderboard Dashboard**: [http://localhost:8082](http://localhost:8082)
