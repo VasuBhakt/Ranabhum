@@ -6,5 +6,6 @@
     "actual_fill_qty": "integer",
     "expected_fill_price": "float",
     "actual_fill_price": "float",
-    "reject_reason": "null|insufficient_liquidity|invalid_price|invalid_order"
+    "reject_reason": "null|insufficient_liquidity|invalid_price|invalid_order",
+    "matched_order_ids": "[uuid-v4|uuid-v4|...]"
 }

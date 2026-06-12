@@ -60,19 +60,21 @@ type OrderResponse struct {
 	AckedAtNs         int64   `json:"acked_at_ns"`
 	ExpectedFillQty   int     `json:"expected_fill_qty"`
 	ActualFillQty     int     `json:"actual_fill_qty"`
-	ExpectedFillPrice float64 `json:"expected_fill_price"`
-	ActualFillPrice   float64 `json:"actual_fill_price"`
-	RejectReason      string  `json:"reject_reason"` // null | insufficient_liquidity | invalid_price | invalid_order
+	ExpectedFillPrice float64  `json:"expected_fill_price"`
+	ActualFillPrice   float64  `json:"actual_fill_price"`
+	RejectReason      string   `json:"reject_reason"` // null | insufficient_liquidity | invalid_price | invalid_order
+	MatchedOrderIDs   []string `json:"matched_order_ids,omitempty"` // Added for Certification Phase
 }
 
 // RunState tracks the lifecycle of a stress-test run in Redis.
 type RunState struct {
 	RunID        string `json:"run_id"`
 	SubmissionID string `json:"submission_id"`
-	Status       string `json:"status"` // PENDING | RUNNING | DONE | FAILED
-	BotCount     int    `json:"bot_count"`
-	StartedAt    int64  `json:"started_at_ns"`
-	EndedAt      int64  `json:"ended_at_ns,omitempty"`
+	Status             string  `json:"status"` // PENDING | RUNNING | DONE | FAILED
+	BotCount           int     `json:"bot_count"`
+	StartedAt          int64   `json:"started_at_ns"`
+	EndedAt            int64   `json:"ended_at_ns,omitempty"`
+	CertificationScore float64 `json:"certification_score"` // 0.0 to 1.0, or -1.0 if not attempted
 }
 
 // NewOrderRequest creates an OrderRequest with a generated ID and current timestamp.

@@ -50,6 +50,7 @@ struct MatchResult {
     actual_fill_qty: i32,
     actual_fill_price: f64,
     status: String,
+    matched_order_ids: Vec<String>,
 }
 
 // Stateful order book simulating actual matching priority
@@ -103,6 +104,7 @@ impl OrderBook {
             actual_fill_qty: 0,
             actual_fill_price: 0.0,
             status: "ack".to_string(),
+            matched_order_ids: Vec::new(),
         };
 
         if side == "buy" {
@@ -130,6 +132,8 @@ impl OrderBook {
                 self.asks[idx].quantity -= match_qty;
                 total_fill_qty += match_qty;
                 total_fill_value += match_qty as f64 * self.asks[idx].price;
+
+                res.matched_order_ids.push(self.asks[idx].order_id.clone());
 
                 if self.asks[idx].quantity == 0 {
                     self.asks.remove(idx);
@@ -180,6 +184,8 @@ impl OrderBook {
                 self.bids[idx].quantity -= match_qty;
                 total_fill_qty += match_qty;
                 total_fill_value += match_qty as f64 * self.bids[idx].price;
+
+                res.matched_order_ids.push(self.bids[idx].order_id.clone());
 
                 if self.bids[idx].quantity == 0 {
                     self.bids.remove(idx);
@@ -247,9 +253,11 @@ fn handle_client(mut stream: TcpStream) {
             .unwrap()
             .as_nanos() as u64;
             
+        let matched_ids_json = format!("[{}]", match_result.matched_order_ids.iter().map(|id| format!("\"{}\"", id)).collect::<Vec<_>>().join(","));
+            
         let response_body = format!(
-            "{{\"order_id\":\"{}\",\"status\":\"{}\",\"acked_at_ns\":{},\"expected_fill_qty\":{},\"actual_fill_qty\":{},\"expected_fill_price\":{},\"actual_fill_price\":{},\"reject_reason\":\"\"}}",
-            order_id, match_result.status, now, quantity, match_result.actual_fill_qty, price, match_result.actual_fill_price
+            "{{\"order_id\":\"{}\",\"status\":\"{}\",\"acked_at_ns\":{},\"expected_fill_qty\":{},\"actual_fill_qty\":{},\"expected_fill_price\":{},\"actual_fill_price\":{},\"reject_reason\":\"\",\"matched_order_ids\":{}}}",
+            order_id, match_result.status, now, quantity, match_result.actual_fill_qty, price, match_result.actual_fill_price, matched_ids_json
         );
         
         let response = format!(

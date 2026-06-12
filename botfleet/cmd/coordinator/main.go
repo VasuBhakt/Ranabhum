@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -27,6 +29,8 @@ func main() {
 	botCount := util.IntEnv("BOT_COUNT", 10)                     // bots per submission
 	ratePerBot := util.IntEnv("RATE_PER_BOT", 50)                // orders/sec per bot
 	runDuration := util.DurationEnv("RUN_DURATION", 60*time.Second)
+	certGapMs := util.IntEnv("CERT_GAP_MS", 20)
+	certPasses := util.IntEnv("CERT_PASSES", 3)
 
 	store := state.New(redisAddr)
 	pub := publisher.New(brokers)
@@ -51,12 +55,22 @@ func main() {
 			targetURL = event.EndpointURL
 		}
 
+		// Run certification phase before load test
+		log.Printf("[coordinator] run_id=%s starting certification phase (gap=%dms, passes=%d)", runID, certGapMs, certPasses)
+		certScore := runCertification(ctx, targetURL, certGapMs, certPasses)
+		if certScore == -1.0 {
+			log.Printf("[coordinator] run_id=%s certification skipped (not attempted by engine)", runID)
+		} else {
+			log.Printf("[coordinator] run_id=%s certification score: %.2f", runID, certScore)
+		}
+
 		run := bot.RunState{
-			RunID:        runID,
-			SubmissionID: event.SubmissionID,
-			Status:       "RUNNING",
-			BotCount:     botCount,
-			StartedAt:    time.Now().UnixNano(),
+			RunID:              runID,
+			SubmissionID:       event.SubmissionID,
+			Status:             "RUNNING",
+			BotCount:           botCount,
+			StartedAt:          time.Now().UnixNano(),
+			CertificationScore: certScore,
 		}
 		if err := store.SetRun(ctx, run); err != nil {
 			return fmt.Errorf("failed to persist run state: %w", err)
@@ -126,4 +140,69 @@ func main() {
 	if err := c.Run(ctx); err != nil {
 		log.Printf("[coordinator] consumer exited: %v", err)
 	}
+}
+
+// runCertification performs a low-concurrency sequential order injection
+// to verify price-time priority (FIFO) matching.
+// Returns a pass rate (0.0 to 1.0), or -1.0 if the engine didn't provide matched_order_ids.
+func runCertification(ctx context.Context, targetURL string, gapMs int, passes int) float64 {
+	client := &http.Client{Timeout: 5 * time.Second}
+	passesPassed := 0
+	attempted := false
+
+	for p := 0; p < passes; p++ {
+		var expectedOrder []string
+		
+		// 1. Send 5 BUY limit orders sequentially
+		for i := 0; i < 5; i++ {
+			order := bot.NewOrderRequest("limit", "buy", 50000.0, 1)
+			expectedOrder = append(expectedOrder, order.OrderID)
+			
+			payload, _ := json.Marshal(order)
+			req, _ := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/order", targetURL), bytes.NewReader(payload))
+			req.Header.Set("Content-Type", "application/json")
+			if resp, err := client.Do(req); err == nil {
+				resp.Body.Close()
+			}
+			time.Sleep(time.Duration(gapMs) * time.Millisecond)
+		}
+
+		// 2. Send 1 SELL market order to sweep the 5 BUYs
+		sweep := bot.NewOrderRequest("market", "sell", 0.0, 5)
+		payload, _ := json.Marshal(sweep)
+		req, _ := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/order", targetURL), bytes.NewReader(payload))
+		req.Header.Set("Content-Type", "application/json")
+		
+		pass := false
+		if resp, err := client.Do(req); err == nil {
+			var orderResp bot.OrderResponse
+			if err := json.NewDecoder(resp.Body).Decode(&orderResp); err == nil {
+				if len(orderResp.MatchedOrderIDs) > 0 {
+					attempted = true
+					if len(orderResp.MatchedOrderIDs) == len(expectedOrder) {
+						match := true
+						for i, id := range expectedOrder {
+							if orderResp.MatchedOrderIDs[i] != id {
+								match = false
+								break
+							}
+						}
+						if match {
+							pass = true
+						}
+					}
+				}
+			}
+			resp.Body.Close()
+		}
+
+		if pass {
+			passesPassed++
+		}
+	}
+
+	if !attempted {
+		return -1.0
+	}
+	return float64(passesPassed) / float64(passes)
 }

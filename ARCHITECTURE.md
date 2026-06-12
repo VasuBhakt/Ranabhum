@@ -46,7 +46,7 @@ graph TD
 | **Message Broker** | Redpanda (Kafka-compatible) | Decouples load generation from telemetry storage. Partitioning by `submission_id` ensures in-order event delivery per run. Avoids injecting DB write latency into the benchmarking hot path. |
 | **Time-Series DB** | TimescaleDB (Postgres) | Hypertable auto-partitioning on `sent_at` optimizes high-frequency inserts. Native `percentile_cont` enables p50/p90/p99 calculations without application-level sorting. |
 | **Leaderboard Cache** | Redis (AOF persistence) | Sorted Sets provide O(log N) rank updates and O(1) top-K reads. AOF persistence ensures rankings survive container restarts without full DB re-aggregation. |
-| **Load Generator** | Go (goroutines) | Native concurrency primitives (goroutines + channels) achieve high fan-out with minimal memory overhead (~8KB per goroutine vs ~1MB per OS thread). |
+| **Load Generator** | Go (goroutines) | Native concurrency primitives (goroutines + channels) achieve high fan-out with minimal memory overhead (~8KB per goroutine vs ~1MB per OS thread). Note: We mandate REST (`HTTP POST`) instead of FIX/WebSocket for this iteration to drastically reduce contestant onboarding friction during a hackathon. |
 | **Sandbox Runtime** | Docker containers | Per-submission process isolation with cgroup resource limits. Language-specific multi-stage Dockerfiles (C++, Go, Rust) keep images minimal. |
 
 ---
@@ -71,6 +71,14 @@ CREATE INDEX idx_submission_run ON order_metrics (submission_id, run_id, sent_at
 ```
 The scoring query filters on `submission_id` and `run_id` — a composite index eliminates full-table scans as historical runs accumulate.
 
+### 3.6 Two-Phase Correctness Validation (Accuracy & FIFO)
+To solve the "Observer Effect" in distributed systems (where concurrent load generation makes deterministic order sequencing impossible), we employ a **Two-Phase Benchmarking Strategy**:
+
+1. **Certification Phase (Low-Concurrency):** Before the stress test begins, the Bot Fleet Coordinator runs a deterministic FIFO check. It injects a sequence of `BUY` orders at the same price separated by a strict time gap (default 20ms) to outpace network jitter. It then sweeps them with a single `SELL` market order. It expects the contestant's engine to return the exact sequence of UUIDs in a `matched_order_ids` JSON array. This runs multiple times to generate a statistical `certification_score`.
+2. **Capacity Phase (Max-Throughput):** Once certified, the coordinator unleashes the asynchronous bot fleet to bombard the engine. Here, we validate **fill accuracy** (`ExpectedFillQty` vs `ActualFillQty`), but strict cross-node FIFO sequence validation is bypassed to allow maximum throughput.
+
+*Extensibility:* The `matched_order_ids` field is optional. Engines that do not implement it skip the Certification Phase and are marked "Not Attempted," preserving backward compatibility while rewarding advanced implementations.
+
 ---
 
 ## 4. Security Model
@@ -84,7 +92,7 @@ Untrusted contestant code runs inside containers with zero-trust defaults:
 | `--security-opt no-new-privileges` | Blocks SUID/SGID privilege escalation |
 | `--read-only` | Immutable root filesystem |
 | `--pids-limit 64` | Fork-bomb mitigation |
-| `--memory 512m` / `--cpus 2` | Hard resource cgroup limits |
+| `--memory 512m` / `--cpus 2` | Hard resource cgroup quotas. *Note: We use CFS quotas (`--cpus`) rather than strict CPU pinning (`--cpuset-cpus`) to avoid core starvation and scheduling deadlocks on shared cloud node pools (e.g., GKE `e2-medium` nodes).* |
 
 ### 4.2 Upload & Build Guards
 - **50MB upload limit** enforced at the application layer before disk write.

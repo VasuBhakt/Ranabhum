@@ -66,6 +66,7 @@ struct MatchResult {
     int actual_fill_qty = 0;
     double actual_fill_price = 0.0;
     std::string status = "ack";
+    std::vector<std::string> matched_order_ids;
 };
 
 // Thread-safe in-memory order book simulating real price-time priority matching
@@ -131,6 +132,8 @@ public:
                 total_fill_qty += match_qty;
                 total_fill_value += match_qty * it->price;
 
+                res.matched_order_ids.push_back(it->order_id);
+
                 if (it->quantity == 0) {
                     it = asks.erase(it);
                 } else {
@@ -176,6 +179,8 @@ public:
                 it->quantity -= match_qty;
                 total_fill_qty += match_qty;
                 total_fill_value += match_qty * it->price;
+
+                res.matched_order_ids.push_back(it->order_id);
 
                 if (it->quantity == 0) {
                     it = bids.erase(it);
@@ -254,8 +259,14 @@ void handle_client(int client_fd) {
               << "\"actual_fill_qty\":" << result.actual_fill_qty << ","
               << "\"expected_fill_price\":" << price << ","
               << "\"actual_fill_price\":" << result.actual_fill_price << ","
-              << "\"reject_reason\":\"\""
-              << "}";
+              << "\"reject_reason\":\"\",";
+              
+    json_resp << "\"matched_order_ids\":[";
+    for (size_t i = 0; i < result.matched_order_ids.size(); ++i) {
+        json_resp << "\"" << result.matched_order_ids[i] << "\"";
+        if (i < result.matched_order_ids.size() - 1) json_resp << ",";
+    }
+    json_resp << "]}";
               
     std::string response_body = json_resp.str();
     

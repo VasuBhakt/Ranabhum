@@ -18,14 +18,15 @@ type OrderRequest struct {
 }
 
 type OrderResponse struct {
-	OrderID           string  `json:"order_id"`
-	Status            string  `json:"status"`
-	AckedAtNs         int64   `json:"acked_at_ns"`
-	ExpectedFillQty   int     `json:"expected_fill_qty"`
-	ActualFillQty     int     `json:"actual_fill_qty"`
-	ExpectedFillPrice float64 `json:"expected_fill_price"`
-	ActualFillPrice   float64 `json:"actual_fill_price"`
-	RejectReason      string  `json:"reject_reason"`
+	OrderID           string   `json:"order_id"`
+	Status            string   `json:"status"`
+	AckedAtNs         int64    `json:"acked_at_ns"`
+	ExpectedFillQty   int      `json:"expected_fill_qty"`
+	ActualFillQty     int      `json:"actual_fill_qty"`
+	ExpectedFillPrice float64  `json:"expected_fill_price"`
+	ActualFillPrice   float64  `json:"actual_fill_price"`
+	RejectReason      string   `json:"reject_reason"`
+	MatchedOrderIDs   []string `json:"matched_order_ids,omitempty"`
 }
 
 // buffer pool to reduce GC pressure

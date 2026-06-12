@@ -1,8 +1,9 @@
 import asyncpg
 import asyncio
 import os
+import json
 
-async def compute_scores(submission_id: str, run_id: str, db_pool=None) -> dict:
+async def compute_scores(submission_id: str, run_id: str, db_pool=None, redis_client=None) -> dict:
     # Use pool if provided, otherwise fall back to direct connection (for standalone testing)
     if db_pool:
         conn = await db_pool.acquire()
@@ -33,7 +34,21 @@ async def compute_scores(submission_id: str, run_id: str, db_pool=None) -> dict:
         tps_val = float(result["tps"] or 0)
         correctness_val = float(result["correctness"] or 0)
         
-        score = (0.4 * tps_val) + (0.4 * (1 / p99)) + (0.2 * correctness_val)
+        cert_score = -1.0
+        if redis_client:
+            run_data = await redis_client.get(f"run:{run_id}")
+            if run_data:
+                run_state = json.loads(run_data)
+                cert_score = float(run_state.get("certification_score", -1.0))
+        
+        # Base score from load test
+        base_score = (0.4 * tps_val) + (0.4 * (1 / p99)) + (0.2 * correctness_val)
+        
+        # Certification bonus multiplier
+        score = base_score
+        if cert_score >= 0.0:
+            # 50% bonus for passing all certification passes, scaling down with pass rate
+            score = base_score * (1.0 + (0.5 * cert_score))
 
         return {
             "submission_id": submission_id,
@@ -43,6 +58,7 @@ async def compute_scores(submission_id: str, run_id: str, db_pool=None) -> dict:
             "p99_ms": round(p99, 2),
             "tps": round(tps_val, 2),
             "correctness": round(correctness_val, 4),
+            "cert_score": round(cert_score, 2),
             "score": round(score, 4)
         }
     finally:

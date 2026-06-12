@@ -62,7 +62,7 @@ async def score_after_delay(sub_id, run_id, db_pool, redis_client, delay=5):
     await flush_batch(db_pool, run_id)
     
     print(f"\n✅ Run {run_id} complete, computing final score...")
-    new_score = await compute_scores(sub_id, run_id, db_pool=db_pool)
+    new_score = await compute_scores(sub_id, run_id, db_pool=db_pool, redis_client=redis_client)
     await update_leaderboard(redis_client, new_score)
     print(f"🏆 Final score for {sub_id}: {new_score['score']}")
     
