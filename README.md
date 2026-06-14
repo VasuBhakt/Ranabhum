@@ -18,7 +18,7 @@ Ranabhum is a highly scalable, event-driven benchmark and real-time telemetry pi
 ├── botfleet/                 # Load generator bots and coordinator (Go)
 │   ├── cmd/                  # Executable entrypoints (coordinator, worker)
 │   └── internal/             # Core benchmark logic, Kafka publishers, & models
-├── tests/                    # Local integration tests and mock contestant files
+├── tests/                    # Mock contestant submissions (Go) for platform validation
 ├── sandbox-engine/           # Submission compiler and container runner (Go)
 ├── telemetry/                # Analytics and metric aggregation service (Python)
 │   ├── app/                  # FastAPI endpoints, TimescaleDB schema, consumer loops
@@ -53,18 +53,21 @@ docker compose up -d --build
 * 🔌 **Sandbox Engine API**: [http://localhost:8080](http://localhost:8080)
 * 💾 **Telemetry REST API**: [http://localhost:8001/health](http://localhost:8001/health)
 
-### 3. Run a test submission:
-Send a mock contestant zip submission (which contains an optimized order matching server in Go, C++, or Rust) to the Sandbox Engine:
+### 3. Run test submissions:
+Four mock submissions are provided (in both Go and C++) with different performance profiles to validate leaderboard differentiation and scoring engine correctness:
 
 ```bash
-# Go submission (titans)
-curl -F "team_name=titans" -F "language=go" -F "file=@./tests/test_submission.zip" http://localhost:8080/submit
+# 1. Go Fast Engine — Basic matching, decent TPS
+curl -F "team_name=vikings" -F "language=go" -F "file=@./tests/go_slow_submission.zip" http://localhost:8080/submit
 
-# C++ submission (gladiators)
+# 2. Go Orderbook Engine — Real price-time priority matching, higher TPS
+curl -F "team_name=phoenix" -F "language=go" -F "file=@./tests/go_orderbook_submission.zip" http://localhost:8080/submit
+
+# 3. C++ Orderbook Engine — Real matching, NGINX-style multi-threaded epoll architecture, absolute highest TPS
 curl -F "team_name=gladiators" -F "language=cpp" -F "file=@./tests/cpp_submission.zip" http://localhost:8080/submit
 
-# Rust submission (vikings)
-curl -F "team_name=vikings" -F "language=rust" -F "file=@./tests/rust_submission.zip" http://localhost:8080/submit
+# 4. C++ Buggy Engine — Thread-per-connection architecture. Triggers high memory usage and contains a deliberate bug (reports false fills on rejected orders). Tests scoring penalty and OOM timeouts!
+curl -F "team_name=romans" -F "language=cpp" -F "file=@./tests/cpp_buggy_submission.zip" http://localhost:8080/submit
 ```
 
 ### 4. Monitor live telemetry consumption:

@@ -63,7 +63,7 @@ The Segmentio `kafka.Writer` is configured with `Async: true`. Metrics are buffe
 The telemetry consumer initializes an `asyncpg.create_pool(min_size=2, max_size=10)`. All write paths i.e., batch inserts and score aggregation, acquire connections from this pool. This supports concurrent run scoring without connection serialization.
 
 ### 3.4 Batch Inserts with Async-Safe Buffering
-Messages are accumulated in a list buffer (`BATCH_SIZE=100`). On flush, the buffer is synchronously copied and cleared before any `await`, preventing new messages from being appended mid-write and then lost on `clear()`. The database insert is wrapped in `asyncio.shield()` to survive task cancellation.
+Messages are accumulated in a list buffer (`BATCH_SIZE=5000`). On flush, the buffer is synchronously copied and cleared before any `await`, preventing new messages from being appended mid-write and then lost on `clear()`. The database insert is wrapped in `asyncio.shield()` to survive task cancellation.
 
 ### 3.5 Composite Index for Score Aggregation
 ```sql
@@ -78,6 +78,9 @@ To solve the "Observer Effect" in distributed systems (where concurrent load gen
 2. **Capacity Phase (Max-Throughput):** Once certified, the coordinator unleashes the asynchronous bot fleet to bombard the engine. Here, we validate **fill accuracy** (`ExpectedFillQty` vs `ActualFillQty`), but strict cross-node FIFO sequence validation is bypassed to allow maximum throughput.
 
 *Extensibility:* The `matched_order_ids` field is optional. Engines that do not implement it skip the Certification Phase and are marked "Not Attempted," preserving backward compatibility while rewarding advanced implementations.
+
+### 3.7 Strict Sequential Test Queuing & Cooldowns
+To prevent CPU thermal-throttling and infrastructure congestion (which can artificially degrade contestant performance), the `botfleet` coordinator implements strict synchronous queuing. It blocks the Kafka consumer loop until a full 60-second stress test completes. Afterward, a mandatory **30-second cooldown gap** is enforced to allow the Redpanda and TimescaleDB telemetry pipelines to fully drain their backlogs before the next queued submission is processed.
 
 ---
 
@@ -99,8 +102,15 @@ Untrusted contestant code runs inside containers with zero-trust defaults:
 - **300-second build timeout** via `context.WithTimeout` on `docker build`, kills hanging or malicious Dockerfiles.
 - Archive extraction uses `filepath.Base()` on all entry names, stripping directory traversal paths (Zip Slip mitigation).
 
-### 4.3 Network Isolation
-Contestant containers run on the default Docker bridge network with no access to internal service DNS. The sandbox engine proxies all order traffic through a reverse proxy endpoint, preventing direct contestant-to-infrastructure communication.
+### 4.3 Network Isolation & Reverse Proxy Architecture
+Contestant containers run on the default Docker bridge network with no access to internal service DNS. All order traffic is routed through the sandbox engine's reverse proxy endpoint, preventing direct contestant-to-infrastructure communication.
+
+**Connection Pooling:** The reverse proxy caches one `httputil.ReverseProxy` instance per active submission, backed by a dedicated `http.Transport` with keep-alive connection pooling (`MaxIdleConnsPerHost: 5000`, `KeepAlive: 30s`). This ensures:
+- Thousands of bot requests reuse a small pool of persistent TCP connections to each container, rather than opening and closing a new connection per request.
+- Accurate latency measurement — TCP handshake overhead is amortised across the run, not inflated into every single p99 sample.
+- Compatibility with raw-socket engines (C++/Rust) that may not handle one-shot connection patterns gracefully.
+
+On container teardown (via `DELETE /submissions/:id` or `DELETE /sandbox/:containerID`), the cached proxy is evicted and its idle connections closed to prevent resource leaks.
 
 ---
 
