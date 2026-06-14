@@ -35,6 +35,36 @@ func NewRunner() (*Runner, error) {
 	return &Runner{portOffset: 0}, nil
 }
 
+// CleanupManagedContainers removes any orphaned sandbox containers from previous runs.
+// Called on startup to prevent resource leaks if the engine crashed mid-run.
+func (r *Runner) CleanupManagedContainers() {
+	cmd := exec.Command("docker", "ps", "-q", "--filter", "label=sandbox.managed=true")
+	out, err := cmd.Output()
+	if err != nil {
+		log.Printf("[cleanup] failed to list managed containers: %v", err)
+		return
+	}
+	ids := strings.Fields(strings.TrimSpace(string(out)))
+	if len(ids) == 0 {
+		log.Printf("[cleanup] no orphaned sandbox containers found")
+		return
+	}
+	for _, id := range ids {
+		log.Printf("[cleanup] removing orphaned container %s", id)
+		_ = r.StopContainer(id)
+	}
+}
+
+// removeImage attempts to remove a Docker image; errors are logged but not fatal.
+func (r *Runner) removeImage(imageName string) {
+	cmd := exec.Command("docker", "rmi", "-f", imageName)
+	if err := cmd.Run(); err != nil {
+		log.Printf("[cleanup] failed to remove image %s: %v", imageName, err)
+	} else {
+		log.Printf("[cleanup] removed image %s", imageName)
+	}
+}
+
 func (r *Runner) DeploySubmission(submissionID, zipPath, language string) (*ContainerInfo, error) {
 	extractDir, err := extractZip(zipPath, submissionID)
 	if err != nil {
@@ -61,6 +91,7 @@ func (r *Runner) DeploySubmission(submissionID, zipPath, language string) (*Cont
 	imageName := fmt.Sprintf("submission-%s", submissionID)
 	log.Printf("[%s] Building Docker image...", submissionID)
 	if err := r.buildImage(extractDir, imageName); err != nil {
+		r.removeImage(imageName) // clean up partial image on build failure
 		return nil, fmt.Errorf("build failed: %w", err)
 	}
 
@@ -72,6 +103,7 @@ func (r *Runner) DeploySubmission(submissionID, zipPath, language string) (*Cont
 	log.Printf("[%s] Starting container on port %s...", submissionID, hostPort)
 	containerID, err := r.runContainer(imageName, hostPort, submissionID)
 	if err != nil {
+		r.removeImage(imageName) // clean up image if container failed to start
 		return nil, fmt.Errorf("failed to start container: %w", err)
 	}
 
@@ -94,7 +126,7 @@ func (r *Runner) buildImage(contextDir, imageName string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "docker", "build", "-t", imageName, contextDir)
+	cmd := exec.CommandContext(ctx, "docker", "build", "--force-rm", "-t", imageName, contextDir)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -148,6 +180,22 @@ func (r *Runner) StopContainer(containerID string) error {
 	return nil
 }
 
+// safePath resolves a zip/tar entry name into a safe absolute path under destDir.
+// Returns empty string if the path escapes the destination (Zip Slip attack).
+func safePath(destDir, entryName string) string {
+	// Clean the entry name to prevent path traversal
+	cleaned := filepath.Clean(entryName)
+	if strings.HasPrefix(cleaned, "..") || strings.HasPrefix(cleaned, string(filepath.Separator)) {
+		return ""
+	}
+	full := filepath.Join(destDir, cleaned)
+	// Double-check the resolved path is under destDir
+	if !strings.HasPrefix(filepath.Clean(full), filepath.Clean(destDir)) {
+		return ""
+	}
+	return full
+}
+
 func extractZip(zipPath, id string) (string, error) {
 	destDir := filepath.Join(os.TempDir(), "sandbox-"+id)
 	if err := os.MkdirAll(destDir, 0755); err != nil {
@@ -161,11 +209,17 @@ func extractZip(zipPath, id string) (string, error) {
 	defer r.Close()
 
 	for _, f := range r.File {
-		fPath := filepath.Join(destDir, filepath.Base(f.Name))
+		fPath := safePath(destDir, f.Name)
+		if fPath == "" {
+			log.Printf("[extract] skipping unsafe path: %s", f.Name)
+			continue
+		}
 		if f.FileInfo().IsDir() {
 			os.MkdirAll(fPath, 0755)
 			continue
 		}
+		// Ensure parent directory exists for nested files like src/main.rs
+		os.MkdirAll(filepath.Dir(fPath), 0755)
 		rc, err := f.Open()
 		if err != nil {
 			return "", err
@@ -204,11 +258,16 @@ func extractTarGz(src, destDir string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		fPath := filepath.Join(destDir, filepath.Base(hdr.Name))
+		fPath := safePath(destDir, hdr.Name)
+		if fPath == "" {
+			log.Printf("[extract] skipping unsafe path: %s", hdr.Name)
+			continue
+		}
 		if hdr.FileInfo().IsDir() {
 			os.MkdirAll(fPath, 0755)
 			continue
 		}
+		os.MkdirAll(filepath.Dir(fPath), 0755)
 		outFile, err := os.Create(fPath)
 		if err != nil {
 			return "", err
