@@ -45,7 +45,7 @@ graph TD
 |-----------|--------|-----------|
 | **Message Broker** | Redpanda (Kafka-compatible) | Decouples load generation from telemetry storage. Partitioning by `submission_id` ensures in-order event delivery per run. Avoids injecting DB write latency into the benchmarking hot path. |
 | **Time-Series DB** | TimescaleDB (Postgres) | Hypertable auto-partitioning on `sent_at` optimizes high-frequency inserts. Native `percentile_cont` enables p50/p90/p99 calculations without application-level sorting. |
-| **Leaderboard Cache** | Redis (AOF persistence) | Sorted Sets provide O(log N) rank updates and O(1) top-K reads. AOF persistence ensures rankings survive container restarts without full DB re-aggregation. |
+| **Leaderboard Cache** | Redis (AOF persistence) | Sorted Sets provide O(log N) rank updates and O(1) top-K reads. By keying entries purely by `team_name` and conditionally checking their historical best score before insertion, the Redis layer inherently enforces a strict "All-Time High" policy, safely enabling unlimited iterative code submissions per team. AOF persistence ensures rankings survive container restarts. |
 | **Load Generator** | Go (goroutines) | Native concurrency primitives (goroutines + channels) achieve high fan-out with minimal memory overhead (~8KB per goroutine vs ~1MB per OS thread). Note: We mandate REST (`HTTP POST`) instead of FIX/WebSocket for this iteration to drastically reduce contestant onboarding friction during a hackathon. |
 | **Sandbox Runtime** | Docker containers | Per-submission process isolation with cgroup resource limits. Language-specific multi-stage Dockerfiles (C++, Go, Rust) keep images minimal. |
 

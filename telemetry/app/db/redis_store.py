@@ -3,28 +3,37 @@ import json
 import asyncio
 
 async def update_leaderboard(client, scores: dict):
-    # Redis sorted set: automatically sorts everyone by their score
-    await client.zadd(
-        "leaderboard", 
-        mapping={scores["submission_id"]: scores["score"]}
-    )
+    team_name = scores.get("team_name", "Unknown")
+    final_score = scores["score"]
     
-    # Store the full score details (TPS, p99, etc.) so the UI can display them
-    await client.set(
-        f"scores:{scores['submission_id']}",
-        json.dumps(scores)
-    )
+    # Get the team's current all-time best score
+    current_score = await client.zscore("leaderboard", team_name)
+    
+    # Only update the leaderboard if this is their first submission, 
+    # or if this new submission beat their previous best score!
+    if current_score is None or final_score > current_score:
+        # Redis sorted set: automatically sorts everyone by their score
+        await client.zadd(
+            "leaderboard", 
+            mapping={team_name: final_score}
+        )
+        
+        # Store the full score details (TPS, p99, etc.) keyed by team_name
+        await client.set(
+            f"scores:{team_name}",
+            json.dumps(scores)
+        )
 
 async def get_leaderboard(client) -> list:
     # Get the top 20 competitors, highest score first
     entries = await client.zrevrange("leaderboard", 0, 19, withscores=True)
     
     result = []
-    for submission_id, score in entries:
-        # Decode the ID from bytes to a string
-        sub_id_str = submission_id.decode('utf-8') if isinstance(submission_id, bytes) else submission_id
+    for team_name, score in entries:
+        # Decode the team name from bytes to a string
+        team_name_str = team_name.decode('utf-8') if isinstance(team_name, bytes) else team_name
         
-        detail = await client.get(f"scores:{sub_id_str}")
+        detail = await client.get(f"scores:{team_name_str}")
         if detail:
             result.append(json.loads(detail))
             
