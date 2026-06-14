@@ -1,386 +1,354 @@
-#include <iostream>
+// Simple C++ HTTP server for order matching engine benchmarking.
+// Uses thread-per-connection with keep-alive. Works with both persistent
+// connections (pooled proxy) and one-shot connections (legacy proxy).
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <string>
-#include <sstream>
+#include <thread>
+#include <mutex>
 #include <vector>
 #include <algorithm>
-#include <mutex>
-#include <queue>
-#include <condition_variable>
-#include <thread>
 #include <chrono>
-#include <cstring>
-#include <unistd.h>
-#include <sys/socket.h>
 #include <netinet/in.h>
-
-// Simple helper to extract string values from JSON
-std::string get_json_string(const std::string& json, const std::string& key) {
-    size_t pos = json.find("\"" + key + "\"");
+#include <sys/socket.h>
+#include <sys/epoll.h>
+#include <fcntl.h>
+#include <unordered_map>
+#include <unistd.h>
+// ──────────────────── JSON helpers ────────────────────
+static std::string json_str(const std::string& json, const char* key) {
+    std::string needle = std::string("\"") + key + "\"";
+    auto pos = json.find(needle);
     if (pos == std::string::npos) return "";
-    
-    pos = json.find(":", pos);
-    if (pos == std::string::npos) return "";
-    
-    size_t start = json.find("\"", pos);
-    if (start == std::string::npos) return "";
-    start++; 
-    
-    size_t end = json.find("\"", start);
-    if (end == std::string::npos) return "";
-    
-    return json.substr(start, end - start);
+    auto colon = json.find(':', pos + needle.size());
+    if (colon == std::string::npos) return "";
+    auto q1 = json.find('"', colon + 1);
+    if (q1 == std::string::npos) return "";
+    auto q2 = json.find('"', q1 + 1);
+    if (q2 == std::string::npos) return "";
+    return json.substr(q1 + 1, q2 - q1 - 1);
 }
 
-// Simple helper to extract numeric values from JSON
-double get_json_numeric(const std::string& json, const std::string& key) {
-    size_t pos = json.find("\"" + key + "\"");
-    if (pos == std::string::npos) return 0.0;
-    
-    pos = json.find(":", pos);
-    if (pos == std::string::npos) return 0.0;
-    pos++; 
-    
-    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) {
-        pos++;
-    }
-    
-    std::string val;
-    while (pos < json.size() && ((json[pos] >= '0' && json[pos] <= '9') || json[pos] == '.' || json[pos] == '-')) {
-        val += json[pos];
-        pos++;
-    }
-    
-    if (val.empty()) return 0.0;
-    return std::stod(val);
+static double json_num(const std::string& json, const char* key) {
+    std::string needle = std::string("\"") + key + "\"";
+    auto pos = json.find(needle);
+    if (pos == std::string::npos) return 0;
+    auto colon = json.find(':', pos + needle.size());
+    if (colon == std::string::npos) return 0;
+    return std::strtod(json.c_str() + colon + 1, nullptr);
 }
 
+static int json_int(const std::string& json, const char* key) {
+    return static_cast<int>(json_num(json, key));
+}
+
+// ──────────────────── Order Book ────────────────────
 struct BookOrder {
-    std::string order_id;
+    std::string id;
     std::string side;
     double price;
     int quantity;
-    long long timestamp;
+    int64_t timestamp;
 };
 
 struct MatchResult {
-    int actual_fill_qty = 0;
-    double actual_fill_price = 0.0;
-    std::string status = "ack";
-    std::vector<std::string> matched_order_ids;
+    std::string status;
+    int actual_fill_qty;
+    double actual_fill_price;
+    std::vector<std::string> matched_ids;
 };
 
-// Thread-safe in-memory order book simulating real price-time priority matching
-class OrderBook {
-private:
-    std::vector<BookOrder> bids; // sorted highest price first
-    std::vector<BookOrder> asks; // sorted lowest price first
-    std::mutex book_mutex;
+static std::mutex book_mutex;
+#include <map>
+#include <deque>
 
-public:
-    MatchResult process_order(const std::string& order_id, const std::string& order_type, const std::string& side, double price, int quantity) {
-        std::lock_guard<std::mutex> lock(book_mutex);
-        MatchResult res;
+// We need a custom comparator to sort bids highest-first
+static std::map<double, std::deque<BookOrder>, std::greater<double>> bids;
+// Asks are sorted lowest-first (default less)
+static std::map<double, std::deque<BookOrder>> asks;
 
-        if (order_type == "cancel") {
-            bool found = false;
-            for (auto it = bids.begin(); it != bids.end(); ++it) {
-                if (it->order_id == order_id) {
-                    bids.erase(it);
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                for (auto it = asks.begin(); it != asks.end(); ++it) {
-                    if (it->order_id == order_id) {
-                        asks.erase(it);
-                        found = true;
-                        break;
-                    }
-                }
-            }
-            res.status = found ? "cancelled" : "rejected";
-            return res;
-        }
+static MatchResult process_order(const std::string& id, const std::string& type,
+                                  const std::string& side, double price, int qty) {
+    std::lock_guard<std::mutex> lock(book_mutex);
 
-        long long now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::system_clock::now().time_since_epoch()
-        ).count();
+    auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
 
-        BookOrder new_order{order_id, side, price, quantity, now_ns};
+    MatchResult res{"ack", 0, 0.0, {}};
 
-        if (side == "buy") {
-            // Match against asks (sellers)
-            std::sort(asks.begin(), asks.end(), [](const BookOrder& a, const BookOrder& b) {
-                if (a.price != b.price) return a.price < b.price; // cheapest first
-                return a.timestamp < b.timestamp;                 // oldest first
-            });
-
-            int remaining_qty = quantity;
-            double total_fill_value = 0.0;
-            int total_fill_qty = 0;
-
-            auto it = asks.begin();
-            while (it != asks.end() && remaining_qty > 0) {
-                if (order_type == "limit" && it->price > price) {
-                    break; // ask price exceeds buy limit
-                }
-                
-                int match_qty = std::min(remaining_qty, it->quantity);
-                remaining_qty -= match_qty;
-                it->quantity -= match_qty;
-                total_fill_qty += match_qty;
-                total_fill_value += match_qty * it->price;
-
-                res.matched_order_ids.push_back(it->order_id);
-
-                if (it->quantity == 0) {
-                    it = asks.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-
-            if (total_fill_qty > 0) {
-                res.actual_fill_qty = total_fill_qty;
-                res.actual_fill_price = total_fill_value / total_fill_qty;
-                res.status = (remaining_qty == 0) ? "filled" : "partial_fill";
-            }
-
-            if (order_type == "limit" && remaining_qty > 0) {
-                new_order.quantity = remaining_qty;
-                bids.push_back(new_order);
-                if (total_fill_qty == 0) {
-                    res.status = "ack";
-                }
-            } else if (order_type == "market" && remaining_qty > 0 && total_fill_qty == 0) {
-                res.status = "rejected";
-            }
-
-        } else if (side == "sell") {
-            // Match against bids (buyers)
-            std::sort(bids.begin(), bids.end(), [](const BookOrder& a, const BookOrder& b) {
-                if (a.price != b.price) return a.price > b.price; // highest price first
-                return a.timestamp < b.timestamp;                 // oldest first
-            });
-
-            int remaining_qty = quantity;
-            double total_fill_value = 0.0;
-            int total_fill_qty = 0;
-
-            auto it = bids.begin();
-            while (it != bids.end() && remaining_qty > 0) {
-                if (order_type == "limit" && it->price < price) {
-                    break; // bid price below sell limit
-                }
-
-                int match_qty = std::min(remaining_qty, it->quantity);
-                remaining_qty -= match_qty;
-                it->quantity -= match_qty;
-                total_fill_qty += match_qty;
-                total_fill_value += match_qty * it->price;
-
-                res.matched_order_ids.push_back(it->order_id);
-
-                if (it->quantity == 0) {
-                    it = bids.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-
-            if (total_fill_qty > 0) {
-                res.actual_fill_qty = total_fill_qty;
-                res.actual_fill_price = total_fill_value / total_fill_qty;
-                res.status = (remaining_qty == 0) ? "filled" : "partial_fill";
-            }
-
-            if (order_type == "limit" && remaining_qty > 0) {
-                new_order.quantity = remaining_qty;
-                asks.push_back(new_order);
-                if (total_fill_qty == 0) {
-                    res.status = "ack";
-                }
-            } else if (order_type == "market" && remaining_qty > 0 && total_fill_qty == 0) {
-                res.status = "rejected";
-            }
-        }
-
+    if (type == "cancel") {
+        res.status = "ack";
         return res;
     }
+
+    int remaining = qty;
+    int total_fill = 0;
+    double total_value = 0.0;
+
+    if (side == "buy") {
+        auto it = asks.begin();
+        while (it != asks.end() && remaining > 0) {
+            if (type == "limit" && it->first > price) break;
+            
+            auto& queue = it->second;
+            while (!queue.empty() && remaining > 0) {
+                auto& top_order = queue.front();
+                int fill = std::min(remaining, top_order.quantity);
+                remaining -= fill;
+                total_fill += fill;
+                total_value += fill * top_order.price;
+                res.matched_ids.push_back(top_order.id);
+                top_order.quantity -= fill;
+
+                if (top_order.quantity == 0) {
+                    queue.pop_front();
+                }
+            }
+            
+            if (queue.empty()) {
+                it = asks.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        if (total_fill > 0) {
+            res.status = remaining == 0 ? "filled" : "partial_fill";
+            res.actual_fill_qty = total_fill;
+            res.actual_fill_price = total_value / total_fill;
+        }
+
+        if (remaining > 0 && type == "limit") {
+            bids[price].push_back({id, side, price, remaining, now});
+            if (total_fill == 0) res.status = "ack";
+        } else if (remaining > 0 && type == "market" && total_fill == 0) {
+            res.status = "rejected";
+        }
+    } else if (side == "sell") {
+        auto it = bids.begin();
+        while (it != bids.end() && remaining > 0) {
+            if (type == "limit" && it->first < price) break;
+            
+            auto& queue = it->second;
+            while (!queue.empty() && remaining > 0) {
+                auto& top_order = queue.front();
+                int fill = std::min(remaining, top_order.quantity);
+                remaining -= fill;
+                total_fill += fill;
+                total_value += fill * top_order.price;
+                res.matched_ids.push_back(top_order.id);
+                top_order.quantity -= fill;
+
+                if (top_order.quantity == 0) {
+                    queue.pop_front();
+                }
+            }
+
+            if (queue.empty()) {
+                it = bids.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        if (total_fill > 0) {
+            res.status = remaining == 0 ? "filled" : "partial_fill";
+            res.actual_fill_qty = total_fill;
+            res.actual_fill_price = total_value / total_fill;
+        }
+
+        if (remaining > 0 && type == "limit") {
+            asks[price].push_back({id, side, price, remaining, now});
+            if (total_fill == 0) res.status = "ack";
+        } else if (remaining > 0 && type == "market" && total_fill == 0) {
+            res.status = "rejected";
+        }
+    }
+
+    if (res.status.empty()) {
+        res.status = (total_fill > 0) ? "partial_fill" : "ack";
+    }
+
+    return res;
+}
+
+// ──────────────────── HTTP handling ────────────────────
+
+#include <poll.h>
+
+// ──────────────────── epoll HTTP Server ────────────────────
+
+struct ClientState {
+    int fd;
+    std::string buf;
 };
 
-OrderBook global_book;
+static void set_nonblocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
 
-void handle_client(int client_fd) {
-    std::string req;
-    char buffer[4096];
+static void write_all(int fd, const char* buf, int len) {
+    int total = 0;
+    while (total < len) {
+        int n = write(fd, buf + total, len - total);
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                struct pollfd pfd{};
+                pfd.fd = fd;
+                pfd.events = POLLOUT;
+                poll(&pfd, 1, -1);
+                continue;
+            }
+            break; // Socket error, client disconnected
+        }
+        total += n;
+    }
+}
+
+static void send_response(int fd, const MatchResult& res,
+                           const std::string& order_id, int qty, double price) {
+    auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+
+    std::string matched = "[";
+    for (size_t i = 0; i < res.matched_ids.size(); ++i) {
+        if (i > 0) matched += ",";
+        matched += "\"" + res.matched_ids[i] + "\"";
+    }
+    matched += "]";
+
+    char body[2048];
+    int body_len = snprintf(body, sizeof(body),
+        "{\"order_id\":\"%s\",\"status\":\"%s\",\"acked_at_ns\":%ld,"
+        "\"expected_fill_qty\":%d,\"actual_fill_qty\":%d,"
+        "\"expected_fill_price\":%.2f,\"actual_fill_price\":%.2f,"
+        "\"reject_reason\":\"\",\"matched_order_ids\":%s}",
+        order_id.c_str(), res.status.c_str(), now,
+        qty, res.actual_fill_qty, price, res.actual_fill_price,
+        matched.c_str());
+
+    char header[256];
+    int hdr_len = snprintf(header, sizeof(header),
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: application/json\r\n"
+        "Content-Length: %d\r\n"
+        "Connection: keep-alive\r\n\r\n", body_len);
+
+    write_all(fd, header, hdr_len);
+    write_all(fd, body, body_len);
+}
+
+#include <thread>
+#include <vector>
+
+void run_worker(int server_fd) {
+    int epoll_fd = epoll_create1(0);
+    struct epoll_event ev, events[4096];
+    
+    // EPOLLEXCLUSIVE prevents thundering herd when multiple threads listen to the same socket
+    ev.events = EPOLLIN | EPOLLEXCLUSIVE;
+    ev.data.fd = server_fd;
+    epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_fd, &ev);
+
+    std::unordered_map<int, ClientState> clients;
+
     while (true) {
-        std::memset(buffer, 0, sizeof(buffer));
-        int bytes_read = read(client_fd, buffer, sizeof(buffer) - 1);
-        if (bytes_read <= 0) break;
-        req.append(buffer, bytes_read);
-        
-        size_t body_pos = req.find("\r\n\r\n");
-        if (body_pos != std::string::npos) {
-            size_t cl_pos = req.find("Content-Length: ");
-            if (cl_pos != std::string::npos) {
-                size_t cl_end = req.find("\r\n", cl_pos);
-                if (cl_end != std::string::npos) {
-                    int cl = std::stoi(req.substr(cl_pos + 16, cl_end - cl_pos - 16));
-                    if (req.size() >= body_pos + 4 + cl) break;
+        int nfds = epoll_wait(epoll_fd, events, 4096, -1);
+        for (int i = 0; i < nfds; ++i) {
+            int fd = events[i].data.fd;
+
+            if (fd == server_fd) {
+                while (true) {
+                    int client_fd = accept(server_fd, nullptr, nullptr);
+                    if (client_fd < 0) break;
+                    set_nonblocking(client_fd);
+                    ev.events = EPOLLIN | EPOLLET;
+                    ev.data.fd = client_fd;
+                    epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev);
+                    clients[client_fd] = {client_fd, ""};
                 }
             } else {
-                break; // No Content-Length, assume done after headers
+                auto& client = clients[fd];
+                char tmp[8192];
+                bool error = false;
+                
+                while (true) {
+                    ssize_t n = read(fd, tmp, sizeof(tmp));
+                    if (n < 0) {
+                        if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+                        error = true;
+                        break;
+                    } else if (n == 0) {
+                        error = true;
+                        break;
+                    } else {
+                        client.buf.append(tmp, n);
+                    }
+                }
+
+                if (!error) {
+                    while (true) {
+                        auto hdr_end = client.buf.find("\r\n\r\n");
+                        if (hdr_end == std::string::npos) break;
+                        
+                        size_t cl = 0;
+                        auto cl_pos = client.buf.find("Content-Length: ");
+                        if (cl_pos != std::string::npos && cl_pos < hdr_end) {
+                            cl = std::strtoul(client.buf.c_str() + cl_pos + 16, nullptr, 10);
+                        }
+                        size_t total = hdr_end + 4 + cl;
+                        
+                        if (client.buf.size() >= total) {
+                            std::string body = client.buf.substr(hdr_end + 4, cl);
+                            client.buf.erase(0, total);
+
+                            auto order_id  = json_str(body, "order_id");
+                            auto order_type = json_str(body, "order_type");
+                            auto side      = json_str(body, "side");
+                            double price   = json_num(body, "price");
+                            int quantity   = json_int(body, "quantity");
+
+                            auto result = process_order(order_id, order_type, side, price, quantity);
+                            send_response(fd, result, order_id, quantity, price);
+                        } else {
+                            break;
+                        }
+                    }
+                }
+
+                if (error) {
+                    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, nullptr);
+                    close(fd);
+                    clients.erase(fd);
+                }
             }
         }
     }
-    
-    if (req.empty()) {
-        close(client_fd);
-        return;
-    }
-    
-    size_t body_pos = req.find("\r\n\r\n");
-    if (body_pos == std::string::npos) {
-        body_pos = req.find("\n\n");
-        if (body_pos != std::string::npos) {
-            body_pos += 2;
-        }
-    } else {
-        body_pos += 4;
-    }
-    
-    std::string body = "";
-    if (body_pos != std::string::npos && body_pos < req.size()) {
-        body = req.substr(body_pos);
-    }
-    
-    std::string order_id = get_json_string(body, "order_id");
-    std::string order_type = get_json_string(body, "order_type");
-    std::string side = get_json_string(body, "side");
-    double price = get_json_numeric(body, "price");
-    double quantity = get_json_numeric(body, "quantity");
-    
-    MatchResult result = global_book.process_order(order_id, order_type, side, price, (int)quantity);
-    
-    auto now = std::chrono::system_clock::now();
-    auto duration = now.time_since_epoch();
-    long long nanoseconds = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
-    
-    std::ostringstream json_resp;
-    json_resp << "{"
-              << "\"order_id\":\"" << order_id << "\","
-              << "\"status\":\"" << result.status << "\","
-              << "\"acked_at_ns\":" << nanoseconds << ","
-              << "\"expected_fill_qty\":" << (int)quantity << ","
-              << "\"actual_fill_qty\":" << result.actual_fill_qty << ","
-              << "\"expected_fill_price\":" << price << ","
-              << "\"actual_fill_price\":" << result.actual_fill_price << ","
-              << "\"reject_reason\":\"\",";
-              
-    json_resp << "\"matched_order_ids\":[";
-    for (size_t i = 0; i < result.matched_order_ids.size(); ++i) {
-        json_resp << "\"" << result.matched_order_ids[i] << "\"";
-        if (i < result.matched_order_ids.size() - 1) json_resp << ",";
-    }
-    json_resp << "]}";
-              
-    std::string response_body = json_resp.str();
-    
-    std::ostringstream http_resp;
-    http_resp << "HTTP/1.1 200 OK\r\n"
-              << "Content-Type: application/json\r\n"
-              << "Content-Length: " << response_body.size() << "\r\n"
-              << "Connection: close\r\n"
-              << "\r\n"
-              << response_body;
-              
-    std::string response_str = http_resp.str();
-    write(client_fd, response_str.c_str(), response_str.size());
-    close(client_fd);
 }
-
-// Fixed ThreadPool to sustain high TPS without resource starvation
-class ThreadPool {
-public:
-    ThreadPool(size_t threads) {
-        for(size_t i = 0; i < threads; ++i)
-            workers.emplace_back([this] {
-                for(;;) {
-                    int client_fd;
-                    {
-                        std::unique_lock<std::mutex> lock(this->queue_mutex);
-                        this->condition.wait(lock, [this]{ return this->stop || !this->tasks.empty(); });
-                        if(this->stop && this->tasks.empty())
-                            return;
-                        client_fd = this->tasks.front();
-                        this->tasks.pop();
-                    }
-                    handle_client(client_fd);
-                }
-            });
-    }
-    void enqueue(int client_fd) {
-        {
-            std::unique_lock<std::mutex> lock(queue_mutex);
-            tasks.push(client_fd);
-        }
-        condition.notify_one();
-    }
-    ~ThreadPool() {
-        {
-            std::unique_lock<std::mutex> lock(queue_mutex);
-            stop = true;
-        }
-        condition.notify_all();
-        for(std::thread &worker: workers) {
-            if(worker.joinable()) worker.join();
-        }
-    }
-private:
-    std::vector<std::thread> workers;
-    std::queue<int> tasks;
-    std::mutex queue_mutex;
-    std::condition_variable condition;
-    bool stop = false;
-};
 
 int main() {
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_fd < 0) {
-        return 1;
-    }
-    
     int opt = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    
-    struct sockaddr_in address;
-    std::memset(&address, 0, sizeof(address));
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(8080);
-    
-    if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
-        return 1;
-    }
-    
-    if (listen(server_fd, 4096) < 0) {
-        return 1;
-    }
-    
-    std::cout << "Optimized C++ Order Matching Engine listening on :8080" << std::endl;
-    
-    // Allocate 8 concurrent worker threads
-    ThreadPool pool(8);
-    
-    while (true) {
-        int client_fd = accept(server_fd, nullptr, nullptr);
-        if (client_fd >= 0) {
-            pool.enqueue(client_fd);
-        }
-    }
-    
-    close(server_fd);
+    set_nonblocking(server_fd);
+
+    struct sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(8080);
+    bind(server_fd, (struct sockaddr*)&addr, sizeof(addr));
+    listen(server_fd, 8192);
+
+    printf("C++ epoll Engine listening on :8080 (Multi-threaded NGINX Architecture)\n");
+    fflush(stdout);
+
+    // Spawn 2 workers to perfectly match the 2 CPU cores available to the Docker container
+    std::thread t1(run_worker, server_fd);
+    std::thread t2(run_worker, server_fd);
+
+    t1.join();
+    t2.join();
     return 0;
 }
