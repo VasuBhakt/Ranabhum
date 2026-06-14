@@ -55,21 +55,22 @@ type OrderRequest struct {
 
 // OrderResponse is the HTTP response from the MS1 sandbox.
 type OrderResponse struct {
-	OrderID           string  `json:"order_id"`
-	Status            string  `json:"status"` // ack | partial_fill | filled | rejected
-	AckedAtNs         int64   `json:"acked_at_ns"`
-	ExpectedFillQty   int     `json:"expected_fill_qty"`
-	ActualFillQty     int     `json:"actual_fill_qty"`
+	OrderID           string   `json:"order_id"`
+	Status            string   `json:"status"` // ack | partial_fill | filled | rejected
+	AckedAtNs         int64    `json:"acked_at_ns"`
+	ExpectedFillQty   int      `json:"expected_fill_qty"`
+	ActualFillQty     int      `json:"actual_fill_qty"`
 	ExpectedFillPrice float64  `json:"expected_fill_price"`
 	ActualFillPrice   float64  `json:"actual_fill_price"`
-	RejectReason      string   `json:"reject_reason"` // null | insufficient_liquidity | invalid_price | invalid_order
+	RejectReason      string   `json:"reject_reason"`               // null | insufficient_liquidity | invalid_price | invalid_order
 	MatchedOrderIDs   []string `json:"matched_order_ids,omitempty"` // Added for Certification Phase
 }
 
 // RunState tracks the lifecycle of a stress-test run in Redis.
 type RunState struct {
-	RunID        string `json:"run_id"`
-	SubmissionID string `json:"submission_id"`
+	RunID              string  `json:"run_id"`
+	SubmissionID       string  `json:"submission_id"`
+	ContestantID       string  `json:"contestant_id"`
 	Status             string  `json:"status"` // PENDING | RUNNING | DONE | FAILED
 	BotCount           int     `json:"bot_count"`
 	StartedAt          int64   `json:"started_at_ns"`

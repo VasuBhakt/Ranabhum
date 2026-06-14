@@ -63,7 +63,7 @@ services:
       dockerfile: Dockerfile
     command: ["/coordinator"]
     env_file:
-      - ./botfleet/.env
+      - ./.env
     environment:
       KAFKA_BROKERS: ${KAFKA_BROKERS:-redpanda:29092}
       REDIS_ADDR: ${REDIS_ADDR:-redis:6379}

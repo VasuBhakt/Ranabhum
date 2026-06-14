@@ -27,7 +27,7 @@ func main() {
 	brokers := strings.Split(util.MustEnv("KAFKA_BROKERS"), ",") // e.g. redpanda:9092
 	redisAddr := util.MustEnv("REDIS_ADDR")                      // e.g. redis:6379
 	botCount := util.IntEnv("BOT_COUNT", 50)                     // bots per submission
-	ratePerBot := util.IntEnv("RATE_PER_BOT", 50)                // orders/sec per bot
+	ratePerBot := util.IntEnv("RATE_PER_BOT", 100)               // orders/sec per bot
 	runDuration := util.DurationEnv("RUN_DURATION", 60*time.Second)
 	certGapMs := util.IntEnv("CERT_GAP_MS", 20)
 	certPasses := util.IntEnv("CERT_PASSES", 3)
@@ -67,6 +67,7 @@ func main() {
 		run := bot.RunState{
 			RunID:              runID,
 			SubmissionID:       event.SubmissionID,
+			ContestantID:       event.ContestantID,
 			Status:             "RUNNING",
 			BotCount:           botCount,
 			StartedAt:          time.Now().UnixNano(),
@@ -102,35 +103,42 @@ func main() {
 			}(i)
 		}
 
-		// Wait in background so we don't block the consumer.
-		go func() {
-			wg.Wait()
-			
-			sandboxEngineURL := os.Getenv("SANDBOX_ENGINE_URL")
-			if sandboxEngineURL == "" {
-				sandboxEngineURL = "http://localhost:8080"
-			}
-			url := fmt.Sprintf("%s/submissions/%s", sandboxEngineURL, event.SubmissionID)
-			log.Printf("[coordinator] run_id=%s cleaning up container for submission_id=%s via %s", runID, event.SubmissionID, url)
-			
-			req, err := http.NewRequest("DELETE", url, nil)
-			if err == nil {
-				resp, err := http.DefaultClient.Do(req)
-				if err == nil {
-					resp.Body.Close()
-					log.Printf("[coordinator] run_id=%s container cleanup request sent successfully", runID)
-				} else {
-					log.Printf("[coordinator] run_id=%s container cleanup failed: %v", runID, err)
-				}
-			}
+		// Wait for the stress test to complete before pulling the next submission.
+		// This ensures submissions are safely queued and do not overlap/destroy CPU.
+		wg.Wait()
 
-			finalStatus := "DONE"
-			if ctx.Err() != nil {
-				finalStatus = "FAILED"
+		sandboxEngineURL := os.Getenv("SANDBOX_ENGINE_URL")
+		if sandboxEngineURL == "" {
+			sandboxEngineURL = "http://localhost:8080"
+		}
+		url := fmt.Sprintf("%s/submissions/%s", sandboxEngineURL, event.SubmissionID)
+		log.Printf("[coordinator] run_id=%s cleaning up container for submission_id=%s via %s", runID, event.SubmissionID, url)
+
+		req, err := http.NewRequest("DELETE", url, nil)
+		if err == nil {
+			resp, err := http.DefaultClient.Do(req)
+			if err == nil {
+				resp.Body.Close()
+				log.Printf("[coordinator] run_id=%s container cleanup request sent successfully", runID)
+			} else {
+				log.Printf("[coordinator] run_id=%s container cleanup failed: %v", runID, err)
 			}
-			store.UpdateStatus(ctx, runID, finalStatus)
-			log.Printf("[coordinator] run_id=%s finished status=%s", runID, finalStatus)
-		}()
+		}
+
+		finalStatus := "DONE"
+		if ctx.Err() != nil {
+			finalStatus = "FAILED"
+		}
+		store.UpdateStatus(ctx, runID, finalStatus)
+		log.Printf("[coordinator] run_id=%s finished status=%s", runID, finalStatus)
+
+		// Give the telemetry pipeline (Kafka -> Python -> TimescaleDB) 10 seconds to fully
+		// drain the queue and free up host CPU before we pull the next queued submission.
+		log.Printf("[coordinator] Waiting 10s for telemetry pipeline to drain before next run...")
+		select {
+		case <-time.After(30 * time.Second):
+		case <-ctx.Done():
+		}
 
 		return nil
 	}
@@ -152,12 +160,12 @@ func runCertification(ctx context.Context, targetURL string, gapMs int, passes i
 
 	for p := 0; p < passes; p++ {
 		var expectedOrder []string
-		
+
 		// 1. Send 5 BUY limit orders sequentially
 		for i := 0; i < 5; i++ {
 			order := bot.NewOrderRequest("limit", "buy", 50000.0, 1)
 			expectedOrder = append(expectedOrder, order.OrderID)
-			
+
 			payload, _ := json.Marshal(order)
 			req, _ := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/order", targetURL), bytes.NewReader(payload))
 			req.Header.Set("Content-Type", "application/json")
@@ -172,7 +180,7 @@ func runCertification(ctx context.Context, targetURL string, gapMs int, passes i
 		payload, _ := json.Marshal(sweep)
 		req, _ := http.NewRequestWithContext(ctx, "POST", fmt.Sprintf("%s/order", targetURL), bytes.NewReader(payload))
 		req.Header.Set("Content-Type", "application/json")
-		
+
 		pass := false
 		if resp, err := client.Do(req); err == nil {
 			var orderResp bot.OrderResponse
