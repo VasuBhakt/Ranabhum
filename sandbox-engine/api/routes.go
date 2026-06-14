@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -12,13 +14,19 @@ import (
 	"sandbox-engine/publisher"
 	"sandbox-engine/store"
 	"strconv"
-	"fmt"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 var runner *docker.Runner
+
+// proxyCache stores a reusable *httputil.ReverseProxy per submission ID.
+// Each proxy has its own http.Transport with keep-alive and connection pooling,
+// so thousands of bot requests reuse a small pool of persistent TCP connections
+// to the container instead of opening (and immediately closing) one per request.
+var proxyCache sync.Map // map[submissionID string]*httputil.ReverseProxy
 
 func InitRunner(r *docker.Runner) {
 	runner = r
@@ -31,6 +39,63 @@ func RegisterRoutes(router *gin.Engine) {
 	router.DELETE("/submissions/:id", handleStopSubmission)
 	router.DELETE("/sandbox/:containerID", handleContainerDeletion)
 	router.POST("/sandbox/:id/order", handleProxyOrder)
+}
+
+// getOrCreateProxy returns a cached reverse proxy for the given submission,
+// creating one on first access. The proxy's Transport is configured for
+// high-throughput keep-alive connections to the sandbox container.
+func getOrCreateProxy(submissionID, endpointURL string) (*httputil.ReverseProxy, error) {
+	if cached, ok := proxyCache.Load(submissionID); ok {
+		return cached.(*httputil.ReverseProxy), nil
+	}
+
+	target, err := url.Parse(endpointURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid endpoint URL %q: %w", endpointURL, err)
+	}
+
+	// Dedicated transport per container — keeps connections alive and pools them.
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:        5000,
+		MaxIdleConnsPerHost: 5000, // perfectly matches botfleet's capacity
+		IdleConnTimeout:     90 * time.Second,
+		DisableKeepAlives:   false,
+	}
+
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = target.Scheme
+			req.URL.Host = target.Host
+			req.URL.Path = "/order"
+			req.Host = target.Host
+		},
+		Transport: transport,
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			log.Printf("[proxy:%s] upstream error: %v", submissionID, err)
+			w.WriteHeader(http.StatusBadGateway)
+			w.Write([]byte(`{"error":"upstream unavailable"}`))
+		},
+	}
+
+	// Store-if-absent to handle concurrent first requests safely
+	actual, _ := proxyCache.LoadOrStore(submissionID, proxy)
+	return actual.(*httputil.ReverseProxy), nil
+}
+
+// evictProxy removes the cached proxy for a submission and closes its idle connections.
+func evictProxy(submissionID string) {
+	if cached, ok := proxyCache.LoadAndDelete(submissionID); ok {
+		if p, ok := cached.(*httputil.ReverseProxy); ok {
+			if t, ok := p.Transport.(*http.Transport); ok {
+				t.CloseIdleConnections()
+			}
+		}
+		log.Printf("[proxy:%s] evicted from cache", submissionID)
+	}
 }
 
 func handleSubmit(c *gin.Context) {
@@ -169,12 +234,22 @@ func handleStopSubmission(c *gin.Context) {
 		return
 	}
 
+	evictProxy(id)
 	store.UpdateStatus(id, model.StatusCompleted)
 	c.JSON(http.StatusOK, gin.H{"message": "Container stopped successfully"})
 }
 
 func handleContainerDeletion(c *gin.Context) {
 	containerID := c.Param("containerID")
+
+	// Find submission by containerID so we can evict its proxy
+	for _, s := range store.GetAllSubmissions() {
+		if s.ContainerID == containerID {
+			evictProxy(s.ID)
+			break
+		}
+	}
+
 	if err := runner.StopContainer(containerID); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -190,18 +265,10 @@ func handleProxyOrder(c *gin.Context) {
 		return
 	}
 
-	target, err := url.Parse(submission.EndpointURL)
+	proxy, err := getOrCreateProxy(id, submission.EndpointURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invalid endpoint URL"})
 		return
-	}
-
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	
-	originalDirector := proxy.Director
-	proxy.Director = func(req *http.Request) {
-		originalDirector(req)
-		req.URL.Path = "/order" // target container expects /order
 	}
 
 	proxy.ServeHTTP(c.Writer, c.Request)

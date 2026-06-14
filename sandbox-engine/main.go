@@ -23,6 +23,9 @@ func main() {
 	}
 	log.Println("🐳 Connected to Docker successfully")
 
+	// Remove any orphaned containers from previous runs
+	runner.CleanupManagedContainers()
+
 	brokersStr := os.Getenv("KAFKA_BROKERS")
 	if brokersStr == "" {
 		brokersStr = "localhost:9092"
