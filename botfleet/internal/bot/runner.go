@@ -130,10 +130,27 @@ func fireOrder(ctx context.Context, client *http.Client, cfg Config, onMetric Me
 			expectedFillPrice = orderResp.ExpectedFillPrice
 			actualFillPrice = orderResp.ActualFillPrice
 
-			// order is considered correct if it was acked, partially filled, or fully filled
-			// rejected or timeout = incorrect
-			if (status == "ack" || status == "partial_fill" || status == "filled") {
-				fillCorrect = 1;
+			// Smart correctness validation checking for contradictory states
+			fillCorrect = 1
+			if status == "rejected" || status == "timeout" {
+				// Rejections MUST have actualFillQty == 0
+				if actualFillQty > 0 {
+					fillCorrect = 0
+				}
+			} else if status == "ack" {
+				// Pure acks (unmatched limit orders) MUST have actualFillQty == 0
+				if actualFillQty > 0 {
+					fillCorrect = 0
+				}
+			} else if status == "partial_fill" || status == "filled" {
+				// Fills MUST actually report a non-zero fill quantity 
+				// and cannot fill more than was requested
+				if actualFillQty <= 0 || actualFillQty > expectedFillQty {
+					fillCorrect = 0
+				}
+			} else {
+				// Unknown status
+				fillCorrect = 0
 			}
 		}
 	}

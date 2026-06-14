@@ -26,7 +26,7 @@ import (
 func main() {
 	brokers := strings.Split(util.MustEnv("KAFKA_BROKERS"), ",") // e.g. redpanda:9092
 	redisAddr := util.MustEnv("REDIS_ADDR")                      // e.g. redis:6379
-	botCount := util.IntEnv("BOT_COUNT", 10)                     // bots per submission
+	botCount := util.IntEnv("BOT_COUNT", 50)                     // bots per submission
 	ratePerBot := util.IntEnv("RATE_PER_BOT", 50)                // orders/sec per bot
 	runDuration := util.DurationEnv("RUN_DURATION", 60*time.Second)
 	certGapMs := util.IntEnv("CERT_GAP_MS", 20)

@@ -35,24 +35,42 @@ async def compute_scores(submission_id: str, run_id: str, db_pool=None, redis_cl
         correctness_val = float(result["correctness"] or 0)
         
         cert_score = -1.0
+        team_name = "Unknown"
         if redis_client:
             run_data = await redis_client.get(f"run:{run_id}")
             if run_data:
                 run_state = json.loads(run_data)
                 cert_score = float(run_state.get("certification_score", -1.0))
+                team_name = run_state.get("contestant_id", "Unknown")
         
-        # Base score from load test
-        base_score = (0.4 * tps_val) + (0.4 * (1 / p99)) + (0.2 * correctness_val)
+        # 1. Normalize TPS (e.g. 10,000 TPS -> 100 points)
+        normalized_tps = tps_val / 100.0
+        
+        # 2. Normalize Latency (p99). e.g., 1ms -> 50 points, 10ms -> 5 points
+        normalized_latency = 50.0 / max(p99, 0.1)
+        
+        # Base performance is purely speed and responsiveness
+        base_performance = normalized_tps + normalized_latency
+        
+        # 3. Correctness Multiplier
+        # If correctness drops below 90%, it's considered broken and heavily penalized.
+        # Otherwise, we use a power of 3 for a smooth, forgiving exponential decay.
+        if correctness_val < 0.90:
+            penalty = 0.01
+        else:
+            penalty = correctness_val ** 3
+            
+        score = base_performance * penalty
         
         # Certification bonus multiplier
-        score = base_score
         if cert_score >= 0.0:
-            # 50% bonus for passing all certification passes, scaling down with pass rate
-            score = base_score * (1.0 + (0.5 * cert_score))
+            # 50% bonus for passing all certification passes
+            score = score * (1.0 + (0.5 * cert_score))
 
         return {
             "submission_id": submission_id,
             "run_id": run_id,
+            "team_name": team_name,
             "p50_ms": round(p50, 2),
             "p90_ms": round(p90, 2),
             "p99_ms": round(p99, 2),

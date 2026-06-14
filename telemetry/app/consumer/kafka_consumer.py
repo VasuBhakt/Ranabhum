@@ -14,7 +14,7 @@ run_last_seen = {}
 run_score_tasks = {}
 # batch buffer for inserts
 batch_buffer = []
-BATCH_SIZE = 100
+BATCH_SIZE = 5000
 batch_counter = {}  # track batches per run_id
 
 async def flush_batch(db_pool, run_id):
@@ -181,8 +181,6 @@ async def consume_metrics():
             # flush batch if we hit batch size
             if len(batch_buffer) >= BATCH_SIZE:
                 await flush_batch(db_pool, run_id)
-            
-            print(f"📥 Buffered order for run {run_id[:8]}... (buffer: {len(batch_buffer)})")
             
             # update last seen time for this run
             run_last_seen[run_id] = asyncio.get_event_loop().time()

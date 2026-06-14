@@ -12,8 +12,7 @@ async def update_leaderboard(client, scores: dict):
     # Store the full score details (TPS, p99, etc.) so the UI can display them
     await client.set(
         f"scores:{scores['submission_id']}",
-        json.dumps(scores),
-        ex=3600 # Auto-deletes after 1 hour to save memory
+        json.dumps(scores)
     )
 
 async def get_leaderboard(client) -> list:
