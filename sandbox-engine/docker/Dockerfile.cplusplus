@@ -4,7 +4,7 @@ WORKDIR /submission
 
 COPY . .
 
-RUN find . -name "*.cpp" | head -1 | xargs -I {} g++ -O2 -o exchange {}
+RUN find . -name "*.cpp" | head -1 | xargs -I {} g++ -std=c++17 -O2 -pthread -o exchange {}
 
 FROM debian:bookworm-slim
 
