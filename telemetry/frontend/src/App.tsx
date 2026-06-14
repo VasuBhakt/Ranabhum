@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 
 interface Score {
   submission_id: string
+  team_name: string
   score: number
   p99_ms: number
   tps: number
@@ -51,7 +52,8 @@ export default function App() {
         <thead style={{ borderBottom: "1px solid #404040" }}>
           <tr>
             <th style={{ padding: "12px" }}>Rank</th>
-            <th style={{ padding: "12px" }}>Submission</th>
+            <th style={{ padding: "12px" }}>Team</th>
+            <th style={{ padding: "12px" }}>Submission ID</th>
             <th style={{ padding: "12px", color: "#ce9178" }}>Score</th>
             <th style={{ padding: "12px" }}>p99 (ms)</th>
             <th style={{ padding: "12px" }}>TPS</th>
@@ -61,7 +63,7 @@ export default function App() {
         <tbody>
           {leaderboard.length === 0 ? (
             <tr>
-              <td colSpan={6} style={{ padding: "12px", textAlign: "center", color: "#808080" }}>
+              <td colSpan={7} style={{ padding: "12px", textAlign: "center", color: "#808080" }}>
                 Waiting for bot telemetry...
               </td>
             </tr>
@@ -69,7 +71,8 @@ export default function App() {
             leaderboard.map((entry, i) => (
               <tr key={entry.submission_id} style={{ borderBottom: "1px solid #333" }}>
                 <td style={{ padding: "12px" }}>#{i + 1}</td>
-                <td style={{ padding: "12px", color: "#4ec9b0" }}>{entry.submission_id}</td>
+                <td style={{ padding: "12px", color: "#c586c0", fontWeight: "bold" }}>{entry.team_name || "Unknown"}</td>
+                <td style={{ padding: "12px", color: "#4ec9b0", fontSize: "0.85em" }}>{entry.submission_id}</td>
                 <td style={{ padding: "12px", color: "#ce9178", fontWeight: "bold" }}>{entry.score.toFixed(2)}</td>
                 <td style={{ padding: "12px" }}>{entry.p99_ms}</td>
                 <td style={{ padding: "12px" }}>{entry.tps}</td>
