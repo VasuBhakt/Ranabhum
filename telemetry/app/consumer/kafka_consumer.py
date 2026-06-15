@@ -147,7 +147,7 @@ async def consume_metrics():
         bootstrap_servers=kafka_brokers,
         group_id="telemetry-consumer",
         value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-        auto_offset_reset="latest"
+        auto_offset_reset="earliest"
     )
     
     # Connection retry loop for Kafka/Redpanda
